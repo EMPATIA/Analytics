@@ -1,0 +1,7 @@
+.idea/
+.env
+Homestead.yaml
+Homestead.json
+/nbproject/private/
+/nbproject/
+.idea/encodings.xml

@@ -454,7 +454,8 @@ class VotesController extends Controller
     {
         try {
 
-            $top = $request->json('top') ?? 10;
+            $top = $request->json('top') ?? null;
+            $viewSubmitted = $request->json('view_submitted') ?? null;
 
             $languageCode = $request->header('LANG-CODE');
             $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
@@ -465,7 +466,6 @@ class VotesController extends Controller
                 'positives' => 1,
                 'negatives' => 1
             ];
-
             // Get data from Event
             $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
             $event = $eventInfo->getEvent();
@@ -474,7 +474,8 @@ class VotesController extends Controller
             $endDate = $event->end_date;
 
             //Get data from all Votes
-            $allVotes = $eventInfo->getEventVotes();
+            $allVotes = $eventInfo->getEventVotes($viewSubmitted);
+
 
             /* ------- Get array with topics details and a collection of votes ------- */
             $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes->votes);
@@ -485,9 +486,16 @@ class VotesController extends Controller
             $votesNegatives = $allVotes->negatives;
             $data = [];
             $countTotalVotes = 0;
+            $countTotalVotesSubmitted = 0;
             $countTotalPositives = 0;
             $countTotalNegative = 0;
+
             $countUsersVoted = collect($allVotes->users)->count();
+            
+            if(!empty($allVotes->votes_submitted)){
+                $countTotalVotesSubmitted = collect($allVotes->votes_submitted)->count();
+            }
+
             $countBalance = 0;
             foreach ($topics as $topic) {
                 $dataTemp['topic_number'] = $topic->topic_number;
@@ -554,6 +562,7 @@ class VotesController extends Controller
 
             $summary = [
                 'total' => $countTotalVotes,
+                'total_submitted' => $countTotalVotesSubmitted,
                 'total_positives' => $countTotalPositives,
                 'total_negatives' => $countTotalNegative,
                 'total_users_voted' => $countUsersVoted,
@@ -569,14 +578,213 @@ class VotesController extends Controller
         }
     }
 
-    public function votesSummary(Request $request, $eventKey)
+
+    /**
+     * @SWG\Post(
+     *  path="/voteEvent/{event_key}/votesByChannel",
+     *  summary="Show Information about vote by channel",
+     *  produces={"application/json"},
+     *  consumes={"application/json"},
+     *  tags={"Vote Statistics"},
+     *
+     *  @SWG\Parameter(
+     *      name="event_key",
+     *      in="path",
+     *      description="Event Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *
+     *
+     *
+     *
+     *  @SWG\Parameter(
+     *      name="X-MODULE-TOKEN",
+     *      in="header",
+     *      description="Module Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE",
+     *      in="header",
+     *      description="User Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE-DEFAULT",
+     *      in="header",
+     *      description="Entity default Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *
+     *  @SWG\Response(
+     *      response="200",
+     *      description="Show vote Information by channel",
+     *      @SWG\Schema(ref="#/definitions/votesInfoReply")
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="400",
+     *      description="Error trying to retrieve data",
+     *      @SWG\Schema(ref="#/definitions/analyticsErrorDefault")
+     *  )
+     * )
+     */
+
+    /**
+     * Request the results of a Vote Event by channel.
+     *
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function infoVotesByChannel(Request $request, $eventKey)
     {
         try {
+
+            $top = $request->json('top') ?? null;
+            $viewSubmitted = $request->json('view_submitted') ?? null;
+
             $languageCode = $request->header('LANG-CODE');
             $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
 
             //GET Information on Vote Configuration
 
+            $weight = [
+                'positives' => 1,
+                'negatives' => 1
+            ];
+
+            // Get data from Event
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+
+            $startDate = $event->start_date;
+            $endDate = $event->end_date;
+
+            //Get data from all Votes
+            $allVotes = $eventInfo->getEventVotes($viewSubmitted);
+
+
+            /* ------- Get array with topics details and a collection of votes ------- */
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes->votes);
+            $votes = $topicVotesVerification['votes_filtered'];
+            $topics = $topicVotesVerification['topic_details'];
+
+            $dataPerChannel = [];
+            $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+            $ola = [];
+            $i = 0;
+            foreach($channels as $channel) {
+                $users = [];
+
+                $data = [];
+
+                // Counting users who voted
+                foreach($allVotes->votes as $vt){
+                    if( $channel == $vt->source ){
+                        $users[$vt->user_key] = 1;
+                    }
+                }
+                $countUsersVoted = count($users);
+                $countBalance = 0;
+                $topics = collect($topics)->keyBy('topic_key');
+                $topicsUsed = [];
+
+
+                if(!collect($allVotes->votes)->where('source', 'like',$channel)->isEmpty()){
+                    foreach(collect($allVotes->votes)->where('source', 'like',$channel) as $vote){
+                        $dataTemp = [];
+                        if(isset($topics[$vote->vote_key]) && !in_array($topics[$vote->vote_key]->topic_number, $topicsUsed)/* && isset($data[$channel]) && !collect($data[$channel])->where('topic_number', '=', $topics[$vote->vote_key]->topic_number)->isEmpty()*/){
+                            $dataTemp['topic_number'] = $topics[$vote->vote_key]->topic_number;
+                            $dataTemp['balance'] = 0;
+                            $dataTemp['title'] = $topics[$vote->vote_key]->title;
+                            $dataTemp['category'] = "";
+                            $dataTemp['geo_area'] = "";
+                            $topicsUsed [] = $topics[$vote->vote_key]->topic_number;
+
+                            if (isset($topics[$vote->vote_key]->parameters)) {
+                                foreach ($topics[$vote->vote_key]->parameters as $value) {
+                                    $options = collect($value->options)->keyBy('id');
+                                    if ($value->code === 'budget') {
+                                        if ($options->has($value->pivot->value)) {
+                                            $dataTemp['budget'] = (int)$options->get($value->pivot->value)->label;
+                                        }
+                                    }
+                                    if ($value->code === 'category') {
+                                        if ($options->has($value->pivot->value)) {
+                                            $dataTemp['category'] = $options->get($value->pivot->value)->label;
+                                        }
+                                    }
+                                    if ($value->code === 'image_map') {
+                                        $dataTemp['geo_area'] = ONE::verifyEmpavilleGeoArea($value->pivot->value);
+                                    }
+                                }
+                            }
+
+
+                            $dataTemp['negatives'] = collect($allVotes->votes)->where('value', '<', 0)->where('source', 'like', $channel)->where('vote_key', 'like', $vote->vote_key)->count();
+//                        }
+                            //$dataTemp['balance'] = ($dataTemp['positives'] * $weight['positives']) - ($dataTemp['negatives'] * $weight['negatives']);
+                            //$countBalance = $countBalance + $dataTemp['balance'];
+                            $dataTemp['positives'] = collect($allVotes->votes)->where('value', '>', 0)->where('source', 'like', $channel)->where('vote_key', 'like', $vote->vote_key)->count();
+
+                            $data[] = $dataTemp;
+                        }
+
+                        usort($data, function ($a, $b) {
+                            return $b['balance'] - $a['balance'];
+                        });
+
+                    }
+                }else{
+                    $data = [];
+                }
+
+                if(!empty($allVotes->total_votes)){
+                    $totalVotes = collect($allVotes->total_votes)->where('source', 'like',$channel)->count();
+                }
+                
+                $data = collect($data)->take($top)->toArray();
+                
+                $summary = [
+                    'total' => collect($allVotes->votes)->where('source', 'like',$channel)->count(),
+                    'total_votes' => $totalVotes ?? collect($allVotes->votes)->where('source', 'like',$channel)->count(),
+                    'total_submitted' => collect($allVotes->votes)->where('source', 'like',$channel)->where('submitted', 'like', 1)->count(),
+                    'total_positives' => collect($allVotes->votes)->where('source', 'like',$channel)->count(),
+                    'total_negatives' => collect($allVotes->votes)->where('value','<', 0)->where('source', 'like',$channel)->count(),
+                    'total_users_voted' => $countUsersVoted,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'total_balance' => $countBalance
+                ];
+                $dataPerChannel[$channel] = ["data" => $data, 'summary' => $summary];
+            }
+
+            return response()->json($dataPerChannel, 200);
+
+        } catch (Exception $e) {
+            dd($e->getMessage());
+            return response()->json(['error' => 'Error trying to retrieve data'], 400);
+        }
+    }
+
+
+    public function votesSummary(Request $request, $eventKey)
+    {
+        try {
+            $viewSubmitted = $request->json('view_submitted') ?? null;
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+            //GET Information on Vote Configuration
             $weight = [
                 'positives' => 1,
                 'negatives' => 1
@@ -610,49 +818,88 @@ class VotesController extends Controller
             $countUsersVoted = collect($allVotes->users)->count();
             $countBalance = 0;
 
+            if(!empty($allVotes->votes_submitted)){
+                $submittedVotes = collect($allVotes->votes_submitted)->groupBy('vote_key')->toArray();
+            }
+
+            $countTotalVotesSubmitted = 0;
+            $countTotalPositivesSubmitted = 0;
+            $countTotalNegativeSubmitted = 0;
+            $countBalanceSubmitted = 0;
+
             foreach (!empty($topics) ? $topics : [] as $topic) {
 
+                $dataTemp['number'] = $topic->topic_number;
                 $dataTemp['balance'] = 0;
                 $dataTemp['title'] = $topic->title;
                 $dataTemp['budget'] = 0;
                 $dataTemp['category'] = "";
                 $dataTemp['geo_area'] = "";
 
-                foreach (!empty($topic->parameters) ? $topic->parameters : [] as $value) {
-                    $options = collect($value->options)->keyBy('id');
-                    if ($value->code === 'budget') {
-                        if($options->has($value->pivot->value)){
-                            $dataTemp['budget'] = (int)$options->get($value->pivot->value)->label;
+                // Parameters fix
+                if(!empty($topic->parameters) ){
+                    $parametersArray = $topic->parameters;
+                } elseif(!empty($topic->_cached_data) ){
+                    $topicParametersTmp = json_decode( $topic->_cached_data );
+                    $parametersArray = !empty($topicParametersTmp->parameters) ? $topicParametersTmp->parameters : [];
+                }
+
+                foreach (!empty($parametersArray) ? $parametersArray : [] as $value) {
+                    if(!empty($value->options)){
+                        $options = collect($value->options)->keyBy('id');
+                        $dataTemp[$value->parameter_code] = $value->pivot->value;
+                        if ($value->code === 'budget' && !empty( (int)$options->get($value->pivot->value)->label) ) {
+                            if($options->has($value->pivot->value)){
+                                $dataTemp['budget'] = (int)$options->get($value->pivot->value)->label;
+                            }
                         }
-                    }
-                    if ($value->code === 'category') {
-                        if($options->has($value->pivot->value)){
-                            $dataTemp['category'] = $options->get($value->pivot->value)->label;
+                        if ($value->code === 'category') {
+                            if($options->has($value->pivot->value) && !empty($options->get($value->pivot->value)->label) ){
+                                $dataTemp['category'] = $options->get($value->pivot->value)->label;
+                            }
                         }
-                    }
-                    if ($value->code === 'image_map') {
-                        $dataTemp['geo_area'] = ONE::verifyEmpavilleGeoArea($value->pivot->value);
+                        if ($value->code === 'image_map') {
+                            $dataTemp['geo_area'] = ONE::verifyEmpavilleGeoArea($value->pivot->value);
+                        }
                     }
                 }
                 if (!empty($votesPositives->{$topic->topic_key})) {
                     $countTotalVotes = $countTotalVotes + $votesPositives->{$topic->topic_key};
                     $countTotalPositives = $countTotalPositives + $votesPositives->{$topic->topic_key};
                     $dataTemp['positives'] = $votesPositives->{$topic->topic_key};
+                    if(!empty($submittedVotes) && !empty($submittedVotes[$topic->topic_key])){
+                        $countTotalVotesSubmitted = $countTotalVotesSubmitted + count($submittedVotes[$topic->topic_key]);
+                        $countTotalPositivesSubmitted = $countTotalPositivesSubmitted + count($submittedVotes[$topic->topic_key]);
+                        $dataTemp['positives_submitted'] = count($submittedVotes[$topic->topic_key]);
+                    }else{
+                        $dataTemp['positives_submitted'] = 0;
+                    }
                 } else {
                     $dataTemp['positives'] = 0;
+                    $dataTemp['positives_submitted'] = 0;
                 }
                 if (!empty($votesNegatives->{$topic->topic_key})) {
                     $countTotalVotes = $countTotalVotes + $votesNegatives->{$topic->topic_key};
                     $countTotalNegative = $countTotalNegative + $votesNegatives->{$topic->topic_key};
                     $dataTemp['negatives'] = $votesNegatives->{$topic->topic_key};
+                    if(!empty($submittedVotes) && !empty($submittedVotes[$topic->topic_key])){
+                        $countTotalVotesSubmitted = $countTotalVotesSubmitted + count($submittedVotes[$topic->topic_key]);
+                        $countTotalNegativesSubmitted = $countTotalNegativesSubmitted + count($submittedVotes[$topic->topic_key]);
+                        $dataTemp['negatives_submitted'] = count($submittedVotes[$topic->topic_key]);
+                    }else{
+                        $dataTemp['negatives_submitted'] = 0;
+                    }
                 } else {
                     $dataTemp['negatives'] = 0;
+                    $dataTemp['negatives_submitted'] = 0;
                 }
                 $dataTemp['balance'] = ($dataTemp['positives'] * $weight['positives']) - ($dataTemp['negatives'] * $weight['negatives']);
+                $dataTemp['balance_submitted'] = ($dataTemp['positives_submitted'] * $weight['positives']) - ($dataTemp['negatives_submitted'] * $weight['negatives']);
                 $countBalance = $countBalance + $dataTemp['balance'];
-
+                $countBalanceSubmitted = $countBalanceSubmitted + $dataTemp['balance_submitted'];
                 $data[] = $dataTemp;
             }
+
             usort($data, function ($a, $b) {
                 return $b['balance'] - $a['balance'];
             });
@@ -677,7 +924,12 @@ class VotesController extends Controller
                 'total_users_voted' => $countUsersVoted,
                 'start_date' => $startDate,
                 'end_date' => $endDate,
-                'total_balance' => $countBalance
+                'total_balance' => $countBalance,
+                'total_submitted' => $countTotalVotesSubmitted,
+                'total_positives_submitted' => $countTotalPositivesSubmitted,
+                'total_negatives_submitted' => $countTotalNegativeSubmitted,
+                'total_balance_submitted' => $countBalanceSubmitted
+
             ];
 
             return response()->json(["data" => $data, 'summary' => $summary], 200);
@@ -2192,6 +2444,8 @@ class VotesController extends Controller
             $entityKey = $request->header('X-ENTITY-KEY');
             //GET Information on Vote Configuration
 
+            $viewSubmitted = $request["view_submitted"] ?? null;
+
             $weight = [
                 'positives' => 1,
                 'negatives' => 1
@@ -2204,6 +2458,17 @@ class VotesController extends Controller
             $allVotes = $eventInfo->getEventVotes();
             $votes = $allVotes->votes;
 
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes->votes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes->votes = $arrayVotes;
+            }
+
             if (empty($votes)){
                 return response()->json(["data" => []], 200);
             }
@@ -2215,6 +2480,7 @@ class VotesController extends Controller
 
             $votesBySource = [];
             foreach ($topics as $topic) {
+                $dataTemp['topic_number'] = $topic->topic_number;
                 $dataTemp['title'] = $topic->title;
                 $dataTemp['budget'] = 0;
                 $dataTemp['category'] = "";

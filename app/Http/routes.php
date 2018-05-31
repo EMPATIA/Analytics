@@ -86,6 +86,7 @@ Route::group(['middleware' => ['authOne']], function () {
     Route::get('voteEvent/{event_key}/votersByChannel', 'VotesController@votersByChannel');
 
     Route::post('voteEvent/{event_key}/votes', 'VotesController@infoVotes');
+    Route::post('voteEvent/{event_key}/votesTotalByChannel', 'VotesController@infoVotesByChannel');
     Route::post('voteEvent/{event_key}/votesSummary', 'VotesController@votesSummary');
     Route::get('voteEvent/{event_key}/empavilleSchools/{cb_key}', 'VotesController@empavilleSchools');
 
@@ -101,8 +102,8 @@ Route::group(['middleware' => ['authOne']], function () {
     |
     */
     Route::get('voteEvent/{event_key}/statisticsTopicParameters', 'VotesStatisticsController@voteStatisticsTopicParameters');
-
     Route::get('voteEvent/{event_key}/statisticsVotersPerDate', 'VotesStatisticsController@voteStatisticsVotersPerDate');
+    Route::get('voteEvent/{event_key}/statisticsByHour', 'VotesStatisticsController@voteStatisticsByHour');
     Route::get('voteEvent/{event_key}/statisticsByDate', 'VotesStatisticsController@voteStatisticsByDate');
     Route::get('voteEvent/{event_key}/statisticsByTown', 'VotesStatisticsController@voteStatisticsByTown');
     Route::get('voteEvent/{event_key}/statisticsByAge', 'VotesStatisticsController@voteStatisticsByAge');
@@ -110,12 +111,21 @@ Route::group(['middleware' => ['authOne']], function () {
     Route::get('voteEvent/{event_key}/statisticsByProfession', 'VotesStatisticsController@voteStatisticsByProfession');
     Route::get('voteEvent/{event_key}/statisticsByEducation', 'VotesStatisticsController@voteStatisticsByEducation');
 
-
     Route::post('voteEvent/{event_key}/statisticsByTop', 'VotesStatisticsController@voteStatisticsByTop');
     Route::post('voteEvent/{event_key}/statisticsTopByDate', 'VotesStatisticsController@voteStatisticsTopByDate');
     Route::post('voteEvent/{event_key}/statisticsByParameter', 'VotesStatisticsController@voteStatisticsByParameter');
-
     Route::post('voteEvent/{event_key}/statisticsLastDay', 'VotesStatisticsController@voteStatisticsLastDay');
+    Route::post('voteEvent/{event_key}/statisticsByTopicParameter', 'VotesStatisticsController@voteStatisticsByTopicParameter');
+
+    /* Analytics v2.0 */
+    Route::post('voteEvent/{event_key}/voteStatisticsByTopicParameterChannelDateRange', 'VotesStatisticsController@voteStatisticsByTopicParameterChannelDateRange');
+    Route::post('voteEvent/{event_key}/voteStatisticsByParameterChannelDateRange', 'VotesStatisticsController@voteStatisticsByParameterChannelDateRange');
+    Route::post('voteEvent/{event_key}/statisticsByParameterChannel', 'VotesStatisticsController@voteStatisticsByParameterChannel');
+    Route::post('voteEvent/{event_key}/statisticsByTopicParameterChannel', 'VotesStatisticsController@voteStatisticsByTopicParameterChannel');
+    Route::get('voteEvent/{event_key}/statisticsByDateRange', 'VotesStatisticsController@voteStatisticsByDateRange');
+    // Route::get('voteEvent/{event_key}/statisticsByDateAndChannel', 'VotesStatisticsController@voteStatisticsByDateAndChannel');
+    Route::post('voteEvent/{event_key}/getVoteStatisticsByTopic', 'VotesStatisticsController@voteStatisticsByTopic');
+    Route::post('voteEvent/{event_key}/getVoteStatisticsByUser', 'VotesStatisticsController@voteStatisticsByUser');
 
 
     Route::post('voteStatistics/{event_key}/topTopics', 'VotesStatisticsController@topTopics');

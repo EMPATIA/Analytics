@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Generic\TopicsInfo;
 use App\Generic\EventInfo;
 use App\Generic\UsersInfo;
 use Carbon\Carbon;
@@ -446,6 +447,22 @@ class VotesStatisticsController extends Controller
         return $dates;
     }
 
+    /** Generate array of dates between date range
+     * @param Carbon $start_date
+     * @param Carbon $end_date
+     * @return array
+     */
+    private function generateDateRangeByHour(Carbon $start_date, Carbon $end_date)
+    {
+        $dates = [];
+
+        for($date = $start_date; $date->lte($end_date); $date->addHour()) {
+            $dates[$date->format('Y-m-d H:00')] = 0;
+        }
+
+        return $dates;
+    }
+
     /**
      * @SWG\Get(
      *  path="/voteEvent/{event_key}/statisticsByDate",
@@ -530,37 +547,257 @@ class VotesStatisticsController extends Controller
                 {
                     case 'in_person':
                         if($vote->value > 0){
-                            $positive['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
+                            $positive['in_person_votes'][$date->format('Y-m-d')] = ($positive['in_person_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                         }else{
-                            $negative['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['in_person_votes'][$date->format('Y-m-d')] = ($negative['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
-                        $balance['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $balance['in_person_votes'][$date->format('Y-m-d')] = ($balance['in_person_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                        $total['in_person_votes'][$date->format('Y-m-d')] = ($total['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
                         break;
                     default:
                         if($vote->value > 0){
-                            $positive['web_votes'][$date->format('Y-m-d')] += $vote->value;
+                            $positive['web_votes'][$date->format('Y-m-d')] = ($positive['web_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                         }else{
-                            $negative['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['web_votes'][$date->format('Y-m-d')] = ($negative['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
-                        $balance['web_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $balance['web_votes'][$date->format('Y-m-d')] = ($balance['web_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                        $total['web_votes'][$date->format('Y-m-d')] = ($total['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         break;
                 }
                 if($vote->value > 0){
-                    $positive['all_votes'][$date->format('Y-m-d')] += $vote->value;
+                    $positive['all_votes'][$date->format('Y-m-d')] = ($positive['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                 }else{
-                    $negative['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                    $negative['all_votes'][$date->format('Y-m-d')] = ($negative['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                 }
-                $balance['all_votes'][$date->format('Y-m-d')] += $vote->value;
-                $total['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                $balance['all_votes'][$date->format('Y-m-d')] = ($balance['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                $total['all_votes'][$date->format('Y-m-d')] = ($total['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
             }
             $data = ['negative_vote' => $negativeVote,'total' => $total, 'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
             return response()->json(["data" => $data], 200);
         }catch (Exception $e){
             return response()->json(['error' => 'Error trying to retrieve data'], 400);
+        }
+
+    }
+
+
+    /**
+     * @SWG\Get(
+     *  path="/voteEvent/{event_key}/statisticsByDate",
+     *  summary="Show vote statistics by date",
+     *  produces={"application/json"},
+     *  consumes={"application/json"},
+     *  tags={"Vote Statistics"},
+     *
+     *  @SWG\Parameter(
+     *      name="event_key",
+     *      in="path",
+     *      description="Event Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-MODULE-TOKEN",
+     *      in="header",
+     *      description="Module Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="200",
+     *      description="Show vote statistics by date",
+     *      @SWG\Schema(ref="#/definitions/voteByDateReply")
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="400",
+     *      description="Error trying to retrieve data",
+     *      @SWG\Schema(ref="#/definitions/analyticsErrorDefault")
+     *  )
+     * )
+     */
+
+    /** Get vote statistics by date and channel
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByHour(Request $request, $eventKey){
+        try {
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+            $viewSubmitted = $request['view_submitted'] ?? null;
+
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+            $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+
+            $startDate = $request->start_date;
+            $endDate = $request->end_date;
+
+            $dateRange = $this->generateDateRangeByHour(Carbon::parse($startDate),Carbon::parse($endDate));
+            $allVotes = $eventInfo->getEventVotes()->votes;
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes = $arrayVotes;
+            }
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+            $votes = $topicVotesVerification['votes_filtered'];
+
+            if ($votes->isEmpty()) {
+                $balance = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $positive = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $negative = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $total = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => [], 'voters_counter' => []];
+                $data = ['negative_vote' => $negativeVote,'total' => $total,'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
+                return response()->json(["data" => $data], 200);
+            }
+
+
+            $balance = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $positive = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $negative = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $total = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange, 'voters_counter' => $dateRange];
+
+            // Counting dinstict voters
+            $votersCounter = [];
+            foreach ($votes as $vote){
+                $date = Carbon::parse($vote->created_at);
+                if(!array_key_exists($date->format('Y-m-d H:00'),$dateRange)){
+                    continue;
+                }
+                $votersCounter[$date->format('Y-m-d H:00')][$vote->user_key] = 1;
+            }
+
+            foreach ($votes as $vote){
+                $date = Carbon::parse($vote->created_at);
+                if(!array_key_exists($date->format('Y-m-d H:00'),$dateRange)){
+                    continue;
+                }
+
+                // $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+                if( $vote->value > 0 ){
+                    $positive[$vote->source][$date->format('Y-m-d H:00')] = !isset($positive[$vote->source][$date->format('Y-m-d H:00')]) ? $vote->value : $vote->value+$positive[$vote->source][$date->format('Y-m-d H:00')]  ;
+                }else{
+                    $negative[$vote->source][$date->format('Y-m-d H:00')] = !isset($negative[$vote->source][$date->format('Y-m-d H:00')]) ? abs($vote->value) : abs($vote->value) + $negative[$vote->source][$date->format('Y-m-d H:00')];
+                }
+                $balance[$vote->source][$date->format('Y-m-d H:00')] = !isset($balance[$vote->source][$date->format('Y-m-d H:00')]) ? $vote->value : $vote->value + $balance[$vote->source][$date->format('Y-m-d H:00')];
+                $total[$vote->source][$date->format('Y-m-d H:00')] = !isset($total[$vote->source][$date->format('Y-m-d H:00')]) ? abs($vote->value) : abs($vote->value) + $total[$vote->source][$date->format('Y-m-d H:00')];
+
+                if($vote->value > 0){
+                    $positive['all_votes'][$date->format('Y-m-d H:00')] += $vote->value;
+                }else{
+                    $negative['all_votes'][$date->format('Y-m-d H:00')] += abs($vote->value);
+                }
+                $balance['all_votes'][$date->format('Y-m-d H:00')] += $vote->value;
+                $total['all_votes'][$date->format('Y-m-d H:00')] += abs($vote->value);
+                $total['voters_counter'][$date->format('Y-m-d H:00')] = count($votersCounter[$date->format('Y-m-d H:00')]);
+            }
+            $data = ['negative_vote' => $negativeVote,'total' => $total, 'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
+            return response()->json(["data" => $data], 200);
+        }catch (Exception $e){
+            return response()->json(['error' => 'Error trying to retrieve data'], 400);
+        }
+
+    }
+
+    /*Get statistics voters per date*/
+    public function voteStatisticsByDateRange(Request $request, $eventKey){
+        try {
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+            $viewSubmitted = $request['view_submitted'] ?? null;
+
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+            $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+
+            $startDate = $request->start_date;
+            $endDate = $request->end_date;
+            $topicKey = $request->topic_key;
+
+            $dateRange = $this->generateDateRange(Carbon::parse($startDate),Carbon::parse($endDate));
+            $allVotes = $eventInfo->getEventVotes()->votes;
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes = $arrayVotes;
+            }
+
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+            $votes = $topicVotesVerification['votes_filtered'];
+
+            if ($votes->isEmpty()) {
+                $balance = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $positive = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $negative = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => []];
+                $total = ['in_person_votes' => [],'web_votes' => [], 'all_votes' => [], 'voters_counter' => []];
+                $data = ['negative_vote' => $negativeVote,'total' => $total,'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
+                return response()->json(["data" => $data], 200);
+            }
+
+            $balance = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $positive = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $negative = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange];
+            $total = ['in_person_votes' => $dateRange,'web_votes' => $dateRange, 'all_votes' => $dateRange, 'voters_counter' => $dateRange];
+
+            // Counting dinstict voters
+            $votersCounter = [];
+            foreach ($votes as $vote){
+                $date = Carbon::parse($vote->created_at);
+                if(!array_key_exists($date->format('Y-m-d'),$dateRange)){
+                    continue;
+                }
+                $votersCounter[$date->format('Y-m-d')][$vote->user_key] = 1;
+            }
+
+            foreach ($votes as $vote) {
+                if( $vote->vote_key == $topicKey || $topicKey == "" ){
+                    $date = Carbon::parse($vote->created_at);
+                    if (!array_key_exists($date->format('Y-m-d'), $dateRange)) {
+                        continue;
+                    }
+
+                    // $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+                    if ($vote->value > 0) {
+                        $positive[$vote->source][$date->format('Y-m-d')] = !isset($positive[$vote->source][$date->format('Y-m-d')]) ? $vote->value : $vote->value + $positive[$vote->source][$date->format('Y-m-d')];
+                    } else {
+                        $negative[$vote->source][$date->format('Y-m-d')] = !isset($negative[$vote->source][$date->format('Y-m-d')]) ? abs($vote->value) : abs($vote->value) + $negative[$vote->source][$date->format('Y-m-d')];
+                    }
+                    $balance[$vote->source][$date->format('Y-m-d')] = !isset($balance[$vote->source][$date->format('Y-m-d')]) ? $vote->value : $vote->value + $balance[$vote->source][$date->format('Y-m-d')];
+                    $total[$vote->source][$date->format('Y-m-d')] = !isset($total[$vote->source][$date->format('Y-m-d')]) ? abs($vote->value) : abs($vote->value) + $total[$vote->source][$date->format('Y-m-d')];
+
+                    if ($vote->value > 0) {
+                        $positive['all_votes'][$date->format('Y-m-d')] = ($positive['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                    } else {
+                        $negative['all_votes'][$date->format('Y-m-d')] = ($negative['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
+                    }
+                    $balance['all_votes'][$date->format('Y-m-d')] = ($balance['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                    $total['all_votes'][$date->format('Y-m-d')] = ($total['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
+                    $total['voters_counter'][$date->format('Y-m-d')] = count($votersCounter[$date->format('Y-m-d')]);
+                }
+            }
+
+            $data = ['negative_vote' => $negativeVote,'total' => $total, 'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
+
+            return response()->json(["data" => $data], 200);
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
         }
 
     }
@@ -576,7 +813,7 @@ class VotesStatisticsController extends Controller
             $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
 
             $startDate = $event->start_date;
-            $endDate = $event->end_date;
+            $endDate   = $event->end_date;
 
             $dateRange = $this->generateDateRange(Carbon::parse($startDate),Carbon::parse($endDate));
             $allVotes = $eventInfo->getEventVotes()->votes;
@@ -631,29 +868,29 @@ class VotesStatisticsController extends Controller
                         if($vote->value > 0){
                             $positive['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
                         }else{
-                            $negative['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['in_person_votes'][$date->format('Y-m-d')] = ($negative['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
-                        $balance['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $balance['in_person_votes'][$date->format('Y-m-d')] = ($balance['in_person_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                        $total['in_person_votes'][$date->format('Y-m-d')] = ($total['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
                         break;
                     default:
                         if($vote->value > 0){
-                            $positive['web_votes'][$date->format('Y-m-d')] += $vote->value;
+                            $positive['web_votes'][$date->format('Y-m-d')] = ($positive['web_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                         }else{
-                            $negative['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['web_votes'][$date->format('Y-m-d')] = ($negative['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
                         $balance['web_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $total['web_votes'][$date->format('Y-m-d')] = ($total['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         break;
                 }
                 if($vote->value > 0){
-                    $positive['all_votes'][$date->format('Y-m-d')] += $vote->value;
+                    $positive['all_votes'][$date->format('Y-m-d')] = ($positive['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                 }else{
-                    $negative['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                    $negative['all_votes'][$date->format('Y-m-d')] = ($negative['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                 }
-                $balance['all_votes'][$date->format('Y-m-d')] += $vote->value;
-                $total['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                $balance['all_votes'][$date->format('Y-m-d')] = ($balance['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                $total['all_votes'][$date->format('Y-m-d')] = ($total['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
             }
             $data = ['negative_vote' => $negativeVote,'total' => $total, 'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
@@ -846,11 +1083,16 @@ class VotesStatisticsController extends Controller
 
             $topicFiltered = [];
             foreach (!empty($topics) ? $topics : [] as $topic){
+                $parametersArray = [];
                 if(!empty($topic->parameters) ){
-                    foreach ($topic->parameters as $parameter){
-                        if($parameter->id == $request->paramId){
-                            $topicFiltered [] = $topic;
-                        }
+                    $parametersArray = $topic->parameters;
+                } elseif(!empty($topic->_cached_data) ){
+                    $topicParametersTmp = json_decode( $topic->_cached_data );
+                    $parametersArray = !empty($topicParametersTmp->parameters) ? $topicParametersTmp->parameters : [];
+                }
+                foreach ($parametersArray as $parameter){
+                    if($parameter->id == $request->paramId){
+                        $topicFiltered [] = $topic;
                     }
                 }
             }
@@ -890,29 +1132,29 @@ class VotesStatisticsController extends Controller
                         if($vote->value > 0){
                             $positive['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
                         }else{
-                            $negative['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['in_person_votes'][$date->format('Y-m-d')] = ($negative['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
-                        $balance['in_person_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['in_person_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $balance['in_person_votes'][$date->format('Y-m-d')] = ($balance['in_person_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                        $total['in_person_votes'][$date->format('Y-m-d')] = ($total['in_person_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
                         break;
                     default:
                         if($vote->value > 0){
-                            $positive['web_votes'][$date->format('Y-m-d')] += $vote->value;
+                            $positive['web_votes'][$date->format('Y-m-d')] = ($positive['web_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                         }else{
-                            $negative['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                            $negative['web_votes'][$date->format('Y-m-d')] = ($negative['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         }
                         $balance['web_votes'][$date->format('Y-m-d')] += $vote->value;
-                        $total['web_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                        $total['web_votes'][$date->format('Y-m-d')] = ($total['web_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                         break;
                 }
                 if($vote->value > 0){
-                    $positive['all_votes'][$date->format('Y-m-d')] += $vote->value;
+                    $positive['all_votes'][$date->format('Y-m-d')] = ($positive['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
                 }else{
-                    $negative['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                    $negative['all_votes'][$date->format('Y-m-d')] = ($negative['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
                 }
-                $balance['all_votes'][$date->format('Y-m-d')] += $vote->value;
-                $total['all_votes'][$date->format('Y-m-d')] += abs($vote->value);
+                $balance['all_votes'][$date->format('Y-m-d')] = ($balance['all_votes'][$date->format('Y-m-d')]??0) + $vote->value;
+                $total['all_votes'][$date->format('Y-m-d')] = ($total['all_votes'][$date->format('Y-m-d')]??0) + abs($vote->value);
 
             }
             $data = ['negative_vote' => $negativeVote,'total' => $total, 'balance' => $balance, 'positive' => $positive, 'negative' => $negative];
@@ -2023,7 +2265,7 @@ class VotesStatisticsController extends Controller
                     $ageValue = '90';
                 }
                 $data = $this->getVoteStatisticsByBirthday($usersInfo,$usersData,$parameterKey,$secondParameterKey,$thirdParameterKey,$votes,$topics,$ageValue);
-                return response()->json(["data" => $data], 200);
+                return response()->json(["data" => $data->getData()->data], 200);
 
             }
 
@@ -2083,7 +2325,7 @@ class VotesStatisticsController extends Controller
 
 
             if($usersWithParameter->isEmpty()){
-                return response()->json(["data" => $data], 200);
+                // return response()->json(["data" => $data], 200);
             }
 
             /** Verify second parameter type and get population by second parameter and parameter requested */
@@ -2109,7 +2351,7 @@ class VotesStatisticsController extends Controller
 
                 /* ------ Map the parameter options name with 0 count ------ */
                 $secondParameterOptionsValues = $secondParameterOptions->mapWithKeys(function ($secondParameter) use($parameterOptionsValues) {
-                        return [$secondParameter->name => $parameterOptionsValues];
+                    return [$secondParameter->name => $parameterOptionsValues];
                 })->toArray();
 
 
@@ -2140,18 +2382,16 @@ class VotesStatisticsController extends Controller
                 return $usersWithParameter->has($vote->user_key);
             })->toArray();
 
-
             /** Get Vote Population By parameter*/
             $votePopulation = $parameterOptionsValues;
             $votesDistinctUsers = collect($votesFiltered)->keyBy('user_key')->toArray();
             foreach ($votesDistinctUsers as $vote){
                 if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))) {
-
-                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                    $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
                     if(empty($optionName)){
                         continue;
                     }
-                    $votePopulation[$optionName] += 1;
+                    $votePopulation[$optionName] = ($votePopulation[$optionName]??0)+1;
                 }
             }
 
@@ -2161,9 +2401,14 @@ class VotesStatisticsController extends Controller
 
             $parametersOptions = [];
             /* ------ Count votes by user option and value ------ */
-            foreach ($votesFiltered as $vote){
+            $votesByParameter['positive']['no_value'] = 0;
+            $votesByParameter['negative']['no_value'] = 0;
+            $votesByParameter['balance']['no_value'] = 0;
+            $votesByParameter['total']['no_value'] = 0;
+
+            foreach ($votes as $vote){
                 if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))){
-                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                    $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
                     if(empty($optionName)){
                         continue;
                     }
@@ -2173,20 +2418,29 @@ class VotesStatisticsController extends Controller
                     }
 
                     if($vote->value > 0){
-                        $votesByParameter['positive'][$optionName] += $vote->value;
+                        $votesByParameter['positive'][$optionName] = ($votesByParameter['positive'][$optionName]??0) + $vote->value;
 
                     }else{
-                        $votesByParameter['negative'][$optionName] += $vote->value;
+                        $votesByParameter['negative'][$optionName] = ($votesByParameter['negative'][$optionName]??0) + $vote->value;
                     }
-                    $votesByParameter['total'][$optionName] += abs($vote->value);
-                    $votesByParameter['balance'][$optionName] += $vote->value;
+                    $votesByParameter['total'][$optionName] = ($votesByParameter['total'][$optionName]??0) + abs($vote->value);
+                    $votesByParameter['balance'][$optionName] = ($votesByParameter['balance'][$optionName]??0) + $vote->value;
+                } else {
+                    if($vote->value > 0){
+                        $votesByParameter['positive']['no_value'] = ($votesByParameter['positive']['no_value']??0) + $vote->value;
+
+                    }else{
+                        $votesByParameter['negative']['no_value'] = ($votesByParameter['negative']['no_value']??0) + $vote->value;
+                    }
+                    $votesByParameter['total']['no_value'] = ($votesByParameter['total']['no_value']??0) + abs($vote->value);
+                    $votesByParameter['balance']['no_value'] = ($votesByParameter['balance']['no_value']??0) + $vote->value;
                 }
             }
 
 
             /** Votes by Topic and parameter */
 
-            $votesByTopicAndParameter = $this->getVotesByTopicAndParameter($topics,$votesFiltered,$usersWithParameter,$parameterOptions);
+            $votesByTopicAndParameter = $this->getVotesByTopicAndParameter($topics,$votes,$usersWithParameter,$parameterOptions);
 
             /** Count votes by parameter, first and second votes */
             $countByParameter = $this->countVotesByParameter($votesFiltered,$usersWithParameter,$parameterOptions);
@@ -2203,11 +2457,1307 @@ class VotesStatisticsController extends Controller
 
             return response()->json(["data" => $data], 200);
         }catch (Exception $e){
-            return response()->json(['error' => 'Error trying to retrieve data'], 400);
+            return response()->json(['error' => $e->getMessage()], 400);
         }
 
     }
 
+
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByTopicParameter(Request $request, $eventKey)
+    {
+        try {
+            $cbKey = $request->json('cb_key');
+            $viewSubmitted = $request->json('view_submitted');
+
+            if(empty($cbKey)){
+                throw new Exception('cb_key_required');
+            }
+
+            $parameterId = $request->json('parameter_id');
+            if(empty($parameterId)){
+                throw new Exception('parameter_id_required');
+            }
+
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+            $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+            $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+            $data = [];
+            $data['statistics_by_topic'] = [];
+            $data['statistics_by_parameter'] = $votesByParameter;
+            $data['count_by_parameter'] = [];
+            $data['first_by_parameter'] = [];
+            $data['second_by_parameter'] = [];
+            $data['parameters_options'] = [];
+            $allVotes = $eventInfo->getEventVotes()->votes;
+
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes = $arrayVotes;
+            }
+
+            /* ------- Get array with topics details and a collection of votes ------- */
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+            $votes = $topicVotesVerification['votes_filtered'];
+            $topics = $topicVotesVerification['topic_details'];
+
+            /* ------ Data Headers to send in request's ------ */
+            $topicsKeys = $votes->keyBy('vote_key')->keys()->toArray();
+            $entityKey = $request->header('X-ENTITY-KEY');
+            $authToken = $request->header('X-AUTH-TOKEN');
+
+            /* ------ User Information with Parameters ------ */
+            // $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);  /* Help --- this is to be removed*/
+            // $usersData = $usersInfo->getUsersParameters($usersKeys);                                /* Help --- this is to be removed*/
+
+            /* ------ Topics Information with Parameters ------ */
+            $topicsInfo = new TopicsInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+            $topicsData = $topicsInfo->getTopicsParameters($cbKey, $topicsKeys);
+
+            /* ------- Get Parameter Options ------- */
+            $parameterAndOptions = $topicsInfo->getParameterAndOptions($parameterId);
+            $parameter = $parameterAndOptions['topic_parameter'];
+
+            $parameterOptions = $parameterAndOptions['topic_parameter_options'];
+            if( $parameterOptions->isEmpty()){
+                return response()->json(["data" => $data], 200);
+            }
+
+            /* ------ Map the parameter options name with 0 count ------ */
+            $parameterOptionsValues = $parameterOptions->mapWithKeys(function ($parameter) {
+                return [$parameter->label => 0];
+            })->toArray();
+
+            $topicsWithParameter = collect($topicsData)->filter(function($topic) use($parameterId,$parameterOptions){
+                if(array_key_exists($parameterId,$topic) && $parameterOptions->has($topic[$parameterId])) {
+                    return true;
+                }
+                return false;
+            })->map(function($parameter) use ($parameterId){
+                return $parameter[$parameterId];
+            });
+
+            if($topicsWithParameter->isEmpty()){
+                return response()->json(["data" => $data], 200);
+            }
+
+            /* ------ Filter votes by user's with parameter ------ */
+            $votesFiltered = $votes->filter(function($vote) use($topicsWithParameter){
+                return $topicsWithParameter->has($vote->vote_key);
+            })->toArray();
+
+            $parametersOptions = [];
+            /* ------ Count votes by user option and value ------ */
+            $votesByParameter['positive']['no_value'] = 0;
+            $votesByParameter['negative']['no_value'] = 0;
+            $votesByParameter['balance']['no_value'] = 0;
+            $votesByParameter['total']['no_value'] = 0;
+            foreach ($allVotes as $vote){
+                if(  $topicsWithParameter->has($vote->vote_key) && $parameterOptions->has($topicsWithParameter->get($vote->vote_key))   ){
+                    $optionName = $parameterOptions->get(  $topicsWithParameter->get($vote->vote_key)  )->label ?? null;
+                    if(empty($optionName)){
+                        continue;
+                    }
+                    if (!in_array($optionName, $parametersOptions)) {
+                        $parametersOptions[] = $optionName;
+                    }
+                    if($vote->value > 0){
+                        $votesByParameter['positive'][$optionName]= ($votesByParameter['positive'][$optionName] ?? 0) + $vote->value;
+                    }else{
+                        $votesByParameter['negative'][$optionName] = ($votesByParameter['positive'][$optionName]?? 0) + $vote->value;
+                    }
+                    $votesByParameter['total'][$optionName] = ($votesByParameter['total'][$optionName] ?? 0) + abs($vote->value);
+                    $votesByParameter['balance'][$optionName] = ($votesByParameter['balance'][$optionName]?? 0) + $vote->value;
+
+                } else {
+                    if($vote->value > 0){
+                        $votesByParameter['positive']['no_value'] = ($votesByParameter['positive']['no_value'] ??0) + $vote->value;
+
+                    }else{
+                        $votesByParameter['negative']['no_value'] = ($votesByParameter['negative']['no_value'] ?? 0) + $vote->value;
+                    }
+                    $votesByParameter['total']['no_value'] = ($votesByParameter['total']['no_value'] ?? 0) + abs($vote->value);
+                    $votesByParameter['balance']['no_value'] = ($votesByParameter['balance']['no_value'] ?? 0) + $vote->value;
+                }
+            }
+
+            /** Votes by Topic and parameter */
+            $votesByTopicAndParameter = $this->getVotesByTopicAndTopicParameter($topics,$allVotes,$topicsWithParameter,$parameterOptions);
+            $votesByTopicAndParameter = collect($votesByTopicAndParameter)->sortByDesc('total');
+
+            /** Count votes by parameter, first and second votes */
+            // $countByParameter = $this->countVotesByParameter($votesFiltered,$usersWithParameter,$parameterOptions);
+
+            $data['statistics_by_topic'] = $votesByTopicAndParameter;
+            $data['statistics_by_parameter'] = $votesByParameter;
+            $data['parameters_options'] = $parametersOptions ?? [];
+
+            return response()->json(["data" => $data], 200);
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
+
+
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByTopic(Request $request, $eventKey)
+    {
+        try {
+            $viewSubmitted = $request->json('view_submitted');
+            $cbKey = $request->json('cb_key');
+            if(empty($cbKey)){
+                throw new Exception('cb_key_required');
+            }
+
+            $parameterId = $request->json('parameter_id');
+            if(empty($parameterId)){
+                throw new Exception('parameter_id_required');
+            }
+
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+            $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+            // $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+            $data = [];
+/*            $data['statistics_by_topic'] = [];
+            $data['statistics_by_parameter'] = $votesByParameter;
+            $data['count_by_parameter'] = [];
+            $data['first_by_parameter'] = [];
+            $data['second_by_parameter'] = [];
+            $data['parameters_options'] = [];*/
+            $allVotes = $eventInfo->getEventVotes()->votes;
+
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes = $arrayVotes;
+            }
+
+
+            /* ------- Get array with topics details and a collection of votes ------- */
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+            $votes = $topicVotesVerification['votes_filtered'];
+            $topics = $topicVotesVerification['topic_details'];
+
+            /* ------ Data Headers to send in request's ------ */
+            $topicsKeys = $votes->keyBy('vote_key')->keys()->toArray();
+
+            $entityKey = $request->header('X-ENTITY-KEY');
+            $authToken = $request->header('X-AUTH-TOKEN');
+
+            /* ------ Topics Information with Parameters ------ */
+            $topicsInfo = new TopicsInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+            $topicsData = $topicsInfo->getTopicsParameters($cbKey,$topicsKeys);
+
+            $statsData = [];
+            foreach($topicsData as $item){
+                foreach ($item as $key => $value){
+                    if($parameterId == $key){
+                        $statsData[] = $value;
+                    }
+                }
+            }
+
+            $data["data"] = $statsData;
+
+            // dd($topicsData);
+            // $data["dataByTopic"] = $topicsData;
+
+            return response()->json(["data" => $data], 200);
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+    }
+
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByUser(Request $request, $eventKey)
+    {
+
+        try {
+            $viewSubmitted = $request->json('view_submitted');
+            $parameterKey = $request->json('parameter_key');
+            if(empty($parameterKey)){
+                throw new Exception('parameter_key_required');
+            }
+
+
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+            $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+            $event = $eventInfo->getEvent();
+            $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+
+            $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+            $data = [];
+        /*
+            $data['statistics_by_topic'] = [];
+            $data['statistics_by_parameter'] = $votesByParameter;
+            $data['count_by_parameter'] = [];
+            $data['first_by_parameter'] = [];
+            $data['second_by_parameter'] = [];
+            $data['parameters_options'] = [];
+        */
+
+
+            $allVotes = $eventInfo->getEventVotes()->votes;
+
+            // Filter submitted votes if needed
+            if($viewSubmitted == 1){
+                $arrayVotes = [];
+                foreach ($allVotes as $vote){
+                    if($vote->submitted == 1){
+                        $arrayVotes[] = $vote;
+                    }
+                }
+                $allVotes = $arrayVotes;
+            }
+
+
+            /* ------- Get array with topics details and a collection of votes ------- */
+            $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+            $votes = $topicVotesVerification['votes_filtered'];
+            $topics = $topicVotesVerification['topic_details'];
+
+            /* ------ Data Headers to send in request's ------ */
+            $usersKeys = $votes->keyBy('user_key')->keys()->toArray();
+            $entityKey = $request->header('X-ENTITY-KEY');
+            $authToken = $request->header('X-AUTH-TOKEN');
+
+            /* ------ User Information with Parameters ------ */
+            $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+            $usersData = $usersInfo->getUsersParameters($usersKeys);
+
+
+
+            $statsData = [];
+            foreach($usersData as $item){
+                foreach ($item as $key => $value){
+                    if($parameterKey == $key){
+                        $statsData[] = $value;
+                    }
+                }
+            }
+
+            $data["data"] = $statsData;
+
+
+            return response()->json(["data" => $data], 200);
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
+
+
+    /**
+     * @SWG\Post(
+     *  path="/voteEvent/{event_key}/statisticsByParameterChannel",
+     *  summary="Show vote statistics by parameter",
+     *  produces={"application/json"},
+     *  consumes={"application/json"},
+     *  tags={"Vote Statistics"},
+     *
+     *
+     *  @SWG\Parameter(
+     *      name="Parameter Key",
+     *      in="body",
+     *      description="Parameter to show statistics",
+     *      required=true,
+     *      @SWG\Schema(ref="#/definitions/parameterStatistics")
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="event_key",
+     *      in="path",
+     *      description="Event Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-AUTH-TOKEN",
+     *      in="header",
+     *      description="User Auth Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-ENTITY-KEY",
+     *      in="header",
+     *      description="Entity Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-MODULE-TOKEN",
+     *      in="header",
+     *      description="Module Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE",
+     *      in="header",
+     *      description="User Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE-DEFAULT",
+     *      in="header",
+     *      description="Entity default Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="200",
+     *      description="Show vote statistics by Top topic and Date",
+     *      @SWG\Schema(ref="#/definitions/voteByParameterReply")
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="400",
+     *      description="Error trying to retrieve data",
+     *      @SWG\Schema(ref="#/definitions/analyticsErrorDefault")
+     *  )
+     * )
+     */
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByParameterChannel(Request $request, $eventKey)
+    {
+        try {
+            $viewSubmitted = $request->json('view_submitted');
+
+            $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+            $data = [];
+
+            foreach($channels as $channel){
+
+                $parameterKey = $request->json('parameter_key');
+                if(empty($parameterKey)){
+                    throw new Exception('parameter_key_required');
+                }
+
+                $languageCode = $request->header('LANG-CODE');
+                $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+                $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+                $event = $eventInfo->getEvent();
+                $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+
+                $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+                $data[$channel]['statistics_by_topic'] = [];
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+                $data[$channel]['count_by_parameter'] = [];
+                $data[$channel]['first_by_parameter'] = [];
+                $data[$channel]['second_by_parameter'] = [];
+                $data[$channel]['parameters_options'] = [];
+
+
+                $allEventVotes = $eventInfo->getEventVotes()->votes;
+
+                $allVotes = [];
+                foreach ($allEventVotes as $eventVote) {
+                    if($eventVote->source == $channel)
+                        $allVotes[] = $eventVote;
+                }
+
+                // Filter submitted votes if needed
+                if($viewSubmitted == 1){
+                    $arrayVotes = [];
+                    foreach ($allVotes as $vote){
+                        if($vote->submitted == 1){
+                            $arrayVotes[] = $vote;
+                        }
+                    }
+                    $allVotes = $arrayVotes;
+                }
+
+                /* ------- Get array with topics details and a collection of votes ------- */
+                $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+                $votes = $topicVotesVerification['votes_filtered'];
+                $topics = $topicVotesVerification['topic_details'];
+
+                /* ------ Data Headers to send in request's ------ */
+                $usersKeys = $votes->keyBy('user_key')->keys()->toArray();
+                $entityKey = $request->header('X-ENTITY-KEY');
+                $authToken = $request->header('X-AUTH-TOKEN');
+
+                /* ------ User Information with Parameters ------ */
+                $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+                $usersData = $usersInfo->getUsersParameters($usersKeys);
+
+                /* ------- Get Parameter Options ------- */
+                $parameterAndOptions = $usersInfo->getParameterAndOptions($parameterKey);
+                $parameter = $parameterAndOptions['user_parameter'];
+
+                $secondParameterKey = $request->json('second_parameter_key');
+                $thirdParameterKey = $request->json('third_parameter_key');
+
+                /** ----------- If parameter is Birthday define intervals ----------- */
+                if($parameter->parameter_type->code == 'birthday'){
+                    $ageValue = $request->json('age_value');
+                    if(empty($ageValue)){
+                        $ageValue = '90';
+                    }
+                    $data[$channel] = $this->getVoteStatisticsByBirthday($usersInfo,$usersData,$parameterKey,$secondParameterKey,$thirdParameterKey,$votes,$topics,$ageValue);
+                    return response()->json(["data" => $data->getData()->data], 200);
+
+                }
+
+                $parameterOptions = $parameterAndOptions['user_parameter_options'];
+                if( $parameterOptions->isEmpty()){
+                    // return response()->json(["data" => $data], 200);
+                }
+
+                /* ------ Map the parameter options name with 0 count ------ */
+                $parameterOptionsValues = $parameterOptions->mapWithKeys(function ($parameter) {
+                    return [$parameter->name => 0];
+                })->toArray();
+
+
+
+
+                //TODO................
+
+                /** ------------------ Get Data from Commuters - for empaville ------------------ */
+                if($parameter->parameter_type->code == 'neighborhood'){
+                    /* ------ Filter User with Parameter and map it with "user key => parameter key" ------ */
+                    $usersWithParameter = collect($usersData)->filter(function($user) use($parameterKey,$parameterOptions){
+                        if(array_key_exists($parameterKey,$user) && $parameterOptions->has($user[$parameterKey])) {
+                            $neighborhoodName = $parameterOptions->get($user[$parameterKey])->name ?? '';
+                            if($neighborhoodName == 'Commuter'){
+                                return true;
+                            }
+                        }
+                        return false;
+                    })->map(function($parameter) use ($parameterKey){
+                        return $parameter[$parameterKey];
+                    });
+
+
+                    if(!$usersWithParameter->isEmpty()){
+                        /* ------ Filter votes by user's with parameter ------ */
+                        $votesFiltered = $votes->filter(function($vote) use($usersWithParameter){
+                            return $usersWithParameter->has($vote->user_key);
+                        })->toArray();
+
+                        $commutersData = $this->getCommutersStatistics($topics,$votesFiltered);
+                        $data['commuters_statistics'] = $commutersData;
+                    }
+
+                }
+
+                /* ------ Filter User with Parameter and map it with "user key => parameter key" ------ */
+                $usersWithParameter = collect($usersData)->filter(function($user) use($parameterKey,$parameterOptions){
+                    if(array_key_exists($parameterKey,$user) && $parameterOptions->has($user[$parameterKey])) {
+                        return true;
+                    }
+                    return false;
+                })->map(function($parameter) use ($parameterKey){
+                    return $parameter[$parameterKey];
+                });
+
+
+                if($usersWithParameter->isEmpty()){
+                    // return response()->json(["data" => $data], 200);
+                }
+
+                /** Verify second parameter type and get population by second parameter and parameter requested */
+                if(!empty($secondParameterKey)){
+
+                    $secondParameterAndOptionsData = $usersInfo->getParameterAndOptions($secondParameterKey);
+                    $secondParameterOptions = $secondParameterAndOptionsData['user_parameter_options'];
+
+                    /* ------ Filter User with Parameter and map it with "user key => parameter key" ------ */
+                    $usersWithTwoParameters = collect($usersData)->filter(function($user) use($parameterKey,$secondParameterKey,$parameterOptions,$secondParameterOptions){
+                        if(array_key_exists($parameterKey,$user) && $parameterOptions->has($user[$parameterKey]) && array_key_exists($secondParameterKey,$user) && $secondParameterOptions->has($user[$secondParameterKey])) {
+                            return true;
+                        }
+                        return false;
+                    })->map(function($parameter) use ($parameterKey,$secondParameterKey){
+                        return ['parameter_key' => $parameter[$parameterKey],'second_parameter_key' => $parameter[$secondParameterKey]];
+                    });
+
+                    /* ------ Filter votes by user's with parameter ------ */
+                    $votesFiltered = $votes->filter(function($vote) use($usersWithTwoParameters){
+                        return $usersWithTwoParameters->has($vote->user_key);
+                    })->toArray();
+
+                    /* ------ Map the parameter options name with 0 count ------ */
+                    $secondParameterOptionsValues = $secondParameterOptions->mapWithKeys(function ($secondParameter) use($parameterOptionsValues) {
+                        return [$secondParameter->name => $parameterOptionsValues];
+                    })->toArray();
+
+
+                    /** Get Vote Population By parameter*/
+                    $votePopulationByTwoParameters = $secondParameterOptionsValues;
+                    $votesDistinctUsers = collect($votesFiltered)->keyBy('user_key')->toArray();
+                    foreach ($votesDistinctUsers as $vote){
+                        if($usersWithTwoParameters->has($vote->user_key) && isset($usersWithTwoParameters->get($vote->user_key)['parameter_key']) && $parameterOptions->has($usersWithTwoParameters->get($vote->user_key)['parameter_key'])
+                            && isset($usersWithTwoParameters->get($vote->user_key)['second_parameter_key']) && $secondParameterOptions->has($usersWithTwoParameters->get($vote->user_key)['second_parameter_key']) ) {
+                            $optionName = $parameterOptions->get($usersWithTwoParameters->get($vote->user_key)['parameter_key'])->name ?? null;
+
+                            $secondOptionName = $secondParameterOptions->get($usersWithTwoParameters->get($vote->user_key)['second_parameter_key'])->name ?? null;
+                            if(empty($optionName) || empty($secondOptionName)){
+                                continue;
+                            }
+
+                            $votePopulationByTwoParameters[$secondOptionName][$optionName] = ($votePopulationByTwoParameters[$secondOptionName][$optionName]??0) + 1;
+                        }
+                    }
+                    $data['vote_population_two_parameters'] = $votePopulationByTwoParameters ?? [];
+
+                }
+
+
+
+                /* ------ Filter votes by user's with parameter ------ */
+                $votesFiltered = $votes->filter(function($vote) use($usersWithParameter){
+                    return $usersWithParameter->has($vote->user_key);
+                })->toArray();
+
+                /** Get Vote Population By parameter*/
+                $votePopulation = $parameterOptionsValues;
+                $votesDistinctUsers = collect($votesFiltered)->keyBy('user_key')->toArray();
+                foreach ($votesDistinctUsers as $vote){
+                    if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))) {
+                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+                        $votePopulation[$optionName] = ($votePopulation[$optionName]??0)+1;
+                    }
+                }
+
+                $votesByParameter = ['negative_vote' => $negativeVote,'total' => $parameterOptionsValues,'balance' => $parameterOptionsValues, 'positive' => $parameterOptionsValues, 'negative' => $parameterOptionsValues];
+
+                $parametersOptions = [];
+                /* ------ Count votes by user option and value ------ */
+                $votesByParameter['positive']['no_value'] = 0;
+                $votesByParameter['negative']['no_value'] = 0;
+                $votesByParameter['balance']['no_value'] = 0;
+                $votesByParameter['total']['no_value'] = 0;
+
+                foreach ($votes as $vote){
+                    if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))){
+                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+
+                        if (!in_array($optionName, $parametersOptions)) {
+                            $parametersOptions[] = $optionName;
+                        }
+
+                        if($vote->value > 0){
+                            $votesByParameter['positive'][$optionName] = ($votesByParameter['positive'][$optionName]??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter['negative'][$optionName] = ($votesByParameter['negative'][$optionName]??0) + $vote->value;
+                        }
+                        $votesByParameter['total'][$optionName] = ($votesByParameter['total'][$optionName]??0) + abs($vote->value);
+                        $votesByParameter['balance'][$optionName] = ($votesByParameter['balance'][$optionName]??0) + $vote->value;
+                    } else {
+                        if($vote->value > 0){
+                            $votesByParameter['positive']['no_value'] = ($votesByParameter['positive']['no_value']??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter['negative']['no_value'] = ($votesByParameter['negative']['no_value']??0) + $vote->value;
+                        }
+                        $votesByParameter['total']['no_value'] = ($votesByParameter['total']['no_value']??0) + abs($vote->value);
+                        $votesByParameter['balance']['no_value'] = ($votesByParameter['balance']['no_value']??0) +$vote->value;
+                    }
+                }
+
+                /** Votes by Topic and parameter */
+                $votesByTopicAndParameter = $this->getVotesByTopicAndParameter($topics,$votes,$usersWithParameter,$parameterOptions);
+
+                /** Count votes by parameter, first and second votes */
+                $countByParameter = $this->countVotesByParameter($votesFiltered,$usersWithParameter,$parameterOptions);
+
+                $votesByTopicAndParameter = collect($votesByTopicAndParameter)->sortByDesc('total');
+
+                $data[$channel]['statistics_by_topic'] = $votesByTopicAndParameter;
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+                $data[$channel]['count_by_parameter'] = $countByParameter['count_by_parameter'] ?? [];
+                $data[$channel]['first_by_parameter'] = $countByParameter['first_by_parameter'] ?? [];
+                $data[$channel]['second_by_parameter'] = $countByParameter['second_by_parameter'] ?? [];
+                $data[$channel]['parameters_options'] = $parametersOptions ?? [];
+                $data[$channel]['vote_population'] = $votePopulation ?? [];
+            }
+            return response()->json(["data" => $data], 200);
+
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
+
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByTopicParameterChannel(Request $request, $eventKey)
+    {
+        try {
+            $viewSubmitted = $request->json('view_submitted');
+            $cbKey = $request->json('cb_key');
+            if(empty($cbKey)){
+                throw new Exception('cb_key_required');
+            }
+
+            $parameterId = $request->json('parameter_id');
+            if(empty($parameterId)){
+                throw new Exception('parameter_id_required');
+            }
+
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+
+            $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+            $data = [];
+
+            foreach($channels as $channel){
+                $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+                $event = $eventInfo->getEvent();
+                $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+                $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+                $data[$channel]['statistics_by_topic'] = [];
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+                $data[$channel]['count_by_parameter'] = [];
+                $data[$channel]['first_by_parameter'] = [];
+                $data[$channel]['second_by_parameter'] = [];
+                $data[$channel]['parameters_options'] = [];
+                $allEventVotes = $eventInfo->getEventVotes()->votes;
+
+                $allVotes = [];
+                foreach ($allEventVotes as $eventVote) {
+                    if($eventVote->source == $channel)
+                        $allVotes[] = $eventVote;
+                }
+
+                // Filter submitted votes if needed
+                if($viewSubmitted == 1){
+                    $arrayVotes = [];
+                    foreach ($allVotes as $vote){
+                        if($vote->submitted == 1){
+                            $arrayVotes[] = $vote;
+                        }
+                    }
+                    $allVotes = $arrayVotes;
+                }
+
+                /* ------- Get array with topics details and a collection of votes ------- */
+                $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+                $votes = $topicVotesVerification['votes_filtered'];
+                $topics = $topicVotesVerification['topic_details'];
+
+                /* ------ Data Headers to send in request's ------ */
+                $topicsKeys = $votes->keyBy('vote_key')->keys()->toArray();
+                $entityKey = $request->header('X-ENTITY-KEY');
+                $authToken = $request->header('X-AUTH-TOKEN');
+
+                /* ------ User Information with Parameters ------ */
+                // $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);  /* Help --- this is to be removed*/
+                // $usersData = $usersInfo->getUsersParameters($usersKeys);                                /* Help --- this is to be removed*/
+
+                /* ------ Topics Information with Parameters ------ */
+                $topicsInfo = new TopicsInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+                $topicsData = $topicsInfo->getTopicsParameters($cbKey, $topicsKeys);
+
+                /* ------- Get Parameter Options ------- */
+                $parameterAndOptions = $topicsInfo->getParameterAndOptions($parameterId);
+                $parameter = $parameterAndOptions['topic_parameter'];
+
+                $parameterOptions = $parameterAndOptions['topic_parameter_options'];
+                if( $parameterOptions->isEmpty()){
+                  //   return response()->json(["data" => $data], 200);
+                }
+
+                /* ------ Map the parameter options name with 0 count ------ */
+                $parameterOptionsValues = $parameterOptions->mapWithKeys(function ($parameter) {
+                    return [$parameter->label => 0];
+                })->toArray();
+
+                $topicsWithParameter = collect($topicsData)->filter(function($topic) use($parameterId,$parameterOptions){
+                    if(array_key_exists($parameterId,$topic) && $parameterOptions->has($topic[$parameterId])) {
+                        return true;
+                    }
+                    return false;
+                })->map(function($parameter) use ($parameterId){
+                    return $parameter[$parameterId];
+                });
+
+                if($topicsWithParameter->isEmpty()){
+                   //  return response()->json(["data" => $data], 200);
+                }
+
+                /* ------ Filter votes by user's with parameter ------ */
+                $votesFiltered = $votes->filter(function($vote) use($topicsWithParameter){
+                    return $topicsWithParameter->has($vote->vote_key);
+                })->toArray();
+
+                $parametersOptions = [];
+                /* ------ Count votes by user option and value ------ */
+                $votesByParameter['positive']['no_value'] = 0;
+                $votesByParameter['negative']['no_value'] = 0;
+                $votesByParameter['balance']['no_value'] = 0;
+                $votesByParameter['total']['no_value'] = 0;
+                foreach ($allVotes as $vote){
+                    if(  $topicsWithParameter->has($vote->vote_key) && $parameterOptions->has($topicsWithParameter->get($vote->vote_key))   ){
+                        $optionName = $parameterOptions->get(  $topicsWithParameter->get($vote->vote_key)  )->label ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+                        if (!in_array($optionName, $parametersOptions)) {
+                            $parametersOptions[] = $optionName;
+                        }
+                        if($vote->value > 0){
+                            $votesByParameter['positive'][$optionName]= ($votesByParameter['positive'][$optionName] ?? 0) + $vote->value;
+                        }else{
+                            $votesByParameter['negative'][$optionName] = ($votesByParameter['positive'][$optionName]?? 0) + $vote->value;
+                        }
+                        $votesByParameter['total'][$optionName] = ($votesByParameter['total'][$optionName] ?? 0) + abs($vote->value);
+                        $votesByParameter['balance'][$optionName] = ($votesByParameter['balance'][$optionName]?? 0) + $vote->value;
+
+                    } else {
+                        if($vote->value > 0){
+                            $votesByParameter['positive']['no_value'] = ($votesByParameter['positive']['no_value'] ??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter['negative']['no_value'] = ($votesByParameter['negative']['no_value'] ?? 0) + $vote->value;
+                        }
+                        $votesByParameter['total']['no_value'] = ($votesByParameter['total']['no_value'] ?? 0) + abs($vote->value);
+                        $votesByParameter['balance']['no_value'] = ($votesByParameter['balance']['no_value'] ?? 0) + $vote->value;
+                    }
+                }
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+
+            }
+            return response()->json(["data" => $data], 200);
+
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
+
+    /**
+     * @SWG\Post(
+     *  path="/voteEvent/{event_key}/statisticsByParameterChannel",
+     *  summary="Show vote statistics by parameter",
+     *  produces={"application/json"},
+     *  consumes={"application/json"},
+     *  tags={"Vote Statistics"},
+     *
+     *
+     *  @SWG\Parameter(
+     *      name="Parameter Key",
+     *      in="body",
+     *      description="Parameter to show statistics",
+     *      required=true,
+     *      @SWG\Schema(ref="#/definitions/parameterStatistics")
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="event_key",
+     *      in="path",
+     *      description="Event Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-AUTH-TOKEN",
+     *      in="header",
+     *      description="User Auth Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-ENTITY-KEY",
+     *      in="header",
+     *      description="Entity Key",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="X-MODULE-TOKEN",
+     *      in="header",
+     *      description="Module Token",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE",
+     *      in="header",
+     *      description="User Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Parameter(
+     *      name="LANG-CODE-DEFAULT",
+     *      in="header",
+     *      description="Entity default Language",
+     *      required=true,
+     *      type="string"
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="200",
+     *      description="Show vote statistics by Top topic and Date",
+     *      @SWG\Schema(ref="#/definitions/voteByParameterReply")
+     *  ),
+     *
+     *  @SWG\Response(
+     *      response="400",
+     *      description="Error trying to retrieve data",
+     *      @SWG\Schema(ref="#/definitions/analyticsErrorDefault")
+     *  )
+     * )
+     */
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByParameterChannelDateRange(Request $request, $eventKey)
+    {
+        try {
+            $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+            $data = [];
+
+            $startDate = $request->start_date;
+            $endDate = $request->end_date;
+            $parameterKey = $request->json('parameter_key');
+            $viewSubmitted = $request->json('view_submitted');
+
+
+            $dateRange = $this->generateDateRange(Carbon::parse($startDate),Carbon::parse($endDate));
+
+            foreach($channels as $channel){
+                if(empty($parameterKey)){
+                    throw new Exception('parameter_key_required');
+                }
+
+                $languageCode = $request->header('LANG-CODE');
+                $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+                $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+                $event = $eventInfo->getEvent();
+                $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+
+
+                $allEventVotes = $eventInfo->getEventVotes()->votes;
+                $allVotes = [];
+                foreach ($allEventVotes as $eventVote) {
+                    if($eventVote->source == $channel)
+                        $allVotes[] = $eventVote;
+                }
+
+                // Filter submitted votes if needed
+                if($viewSubmitted == 1){
+                    $arrayVotes = [];
+                    foreach ($allVotes as $vote){
+                        if($vote->submitted == 1){
+                            $arrayVotes[] = $vote;
+                        }
+                    }
+                    $allVotes = $arrayVotes;
+                }
+
+                /* ------- Get array with topics details and a collection of votes ------- */
+                $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+                $votes = $topicVotesVerification['votes_filtered'];
+                $topics = $topicVotesVerification['topic_details'];
+
+                /* ------ Data Headers to send in request's ------ */
+                $usersKeys = $votes->keyBy('user_key')->keys()->toArray();
+                $entityKey = $request->header('X-ENTITY-KEY');
+                $authToken = $request->header('X-AUTH-TOKEN');
+
+                /* ------ User Information with Parameters ------ */
+                $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+                $usersData = $usersInfo->getUsersParameters($usersKeys);
+
+                /* ------- Get Parameter Options ------- */
+                $parameterAndOptions = $usersInfo->getParameterAndOptions($parameterKey);
+                $parameter = $parameterAndOptions['user_parameter'];
+
+                $parameterOptions = $parameterAndOptions['user_parameter_options'];
+                if( $parameterOptions->isEmpty()){
+                    // return response()->json(["data" => $data], 200);
+                }
+
+
+                /* ------ Map the parameter options name with 0 count ------ */
+                $parameterOptionsValues = $parameterOptions->mapWithKeys(function ($parameter) {
+                    return [$parameter->name => 0];
+                })->toArray();
+
+
+                /* ------ Filter User with Parameter and map it with "user key => parameter key" ------ */
+                $usersWithParameter = collect($usersData)->filter(function($user) use($parameterKey,$parameterOptions){
+                    if(array_key_exists($parameterKey,$user) && $parameterOptions->has($user[$parameterKey])) {
+                        return true;
+                    }
+                    return false;
+                })->map(function($parameter) use ($parameterKey){
+                    return $parameter[$parameterKey];
+                });
+
+                if($usersWithParameter->isEmpty()){
+                    // return response()->json(["data" => $data], 200);
+                }
+
+
+                /* ------ Filter votes by user's with parameter ------ */
+                $votesFiltered = $votes->filter(function($vote) use($usersWithParameter){
+                    return $usersWithParameter->has($vote->user_key);
+                })->toArray();
+
+
+
+                /** Get Vote Population By parameter*/
+                $votePopulation = $parameterOptionsValues;
+                $votesDistinctUsers = collect($votesFiltered)->keyBy('user_key')->toArray();
+                foreach ($votesDistinctUsers as $vote){
+                    if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))) {
+                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+                        $votePopulation[$optionName] = ($votePopulation[$optionName]??0)+1;
+                    }
+                }
+
+
+                $votesByParameter = [];
+                /*
+                $votesByParameter = ['negative_vote' => $negativeVote,
+                                     'total' => $parameterOptionsValues,
+                                     'balance' => $parameterOptionsValues,
+                                     'positive' => $parameterOptionsValues,
+                                     'negative' => $parameterOptionsValues];
+                */
+                $parametersOptions = [];
+                /* ------ Count votes by user option and value ------ */
+                /*
+                $votesByParameter['positive']['no_value'] = 0;
+                $votesByParameter['negative']['no_value'] = 0;
+                $votesByParameter['balance']['no_value'] = 0;
+                $votesByParameter['total']['no_value'] = 0;
+                */
+                foreach ($votes as $vote){
+                    $date = Carbon::parse($vote->created_at);
+                    if (!array_key_exists($date->format('Y-m-d'), $dateRange)) {
+                        continue;
+                    }
+
+                    if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))){
+                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+
+                        if( empty($votesByParameter[$date->format('Y-m-d')][$optionName] )) {
+                            $votesByParameter[$date->format('Y-m-d')][$optionName] = ['negative_vote' => $negativeVote, 'total' => 0, 'balance' => 0, 'positive' =>0, 'negative' => 0];
+                        }
+
+                        if (!in_array($optionName, $parametersOptions)) {
+                            $parametersOptions[] = $optionName;
+                        }
+
+                        if($vote->value > 0){
+                            $votesByParameter[$date->format('Y-m-d')][$optionName]['positive'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['positive']??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter[$date->format('Y-m-d')][$optionName]['negative'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['negative']??0) + $vote->value;
+                        }
+                        $votesByParameter[$date->format('Y-m-d')][$optionName]['total'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['total']??0) + abs($vote->value);
+                        $votesByParameter[$date->format('Y-m-d')][$optionName]['balance'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['balance']??0) + $vote->value;
+
+                        $votesByParameter[$date->format('Y-m-d')][$optionName]['voters'][$vote->user_key] = 1;
+
+                    } else {
+
+                        if( empty($votesByParameter[$date->format('Y-m-d')]['no_value'] )) {
+                            $votesByParameter[$date->format('Y-m-d')]['no_value'] = ['negative_vote' => $negativeVote, 'total' => 0, 'balance' => 0, 'positive' => 0, 'negative' => 0];
+                        }
+
+                        if($vote->value > 0){
+                            $votesByParameter[$date->format('Y-m-d')]['no_value']['positive'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['positive']??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter[$date->format('Y-m-d')]['no_value']['negative'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['negative']??0) + $vote->value;
+                        }
+                        $votesByParameter[$date->format('Y-m-d')]['no_value']['total'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['total']??0) + abs($vote->value);
+                        $votesByParameter[$date->format('Y-m-d')]['no_value']['balance'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['balance']??0) + $vote->value;
+
+                        $votesByParameter[$date->format('Y-m-d')]['no_value']['voters'][$vote->user_key] =  1;
+
+
+                    }
+                }
+
+                /** Votes by Topic and parameter */
+                // $votesByTopicAndParameter = $this->getVotesByTopicAndParameter($topics,$votes,$usersWithParameter,$parameterOptions);
+
+                /** Count votes by parameter, first and second votes */
+                // $countByParameter = $this->countVotesByParameter($votesFiltered,$usersWithParameter,$parameterOptions);
+
+                //  $votesByTopicAndParameter = collect($votesByTopicAndParameter)->sortByDesc('total');
+
+                //  $data[$channel]['statistics_by_topic'] = $votesByTopicAndParameter;
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+                // $data[$channel][$date->format('Y-m-d')]['count_by_parameter'] = $countByParameter['count_by_parameter'] ?? [];
+                //  $data[$channel]['parameters_options'] = $parametersOptions ?? [];
+                // $data[$channel]['vote_population'] = $votePopulation ?? [];
+            }
+
+            return response()->json(["data" => $data], 200);
+
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
+
+
+    /** Get vote statistics by parameter
+     * @param Request $request
+     * @param $eventKey
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function voteStatisticsByTopicParameterChannelDateRange(Request $request, $eventKey)
+    {
+        try {
+            $channels = ['kiosk','pc','mobile','tablet','other','in_person','sms'];
+            $data = [];
+
+            $viewSubmitted = $request->json('view_submitted');
+
+            $cbKey = $request->json('cb_key');
+            if(empty($cbKey)){
+                throw new Exception('cb_key_required');
+            }
+
+            $parameterId = $request->json('parameter_id');
+            if(empty($parameterId)){
+                throw new Exception('parameter_id_required');
+            }
+
+            $languageCode = $request->header('LANG-CODE');
+            $languageCodeDefault = $request->header('LANG-CODE-DEFAULT');
+
+
+            $startDate = $request->start_date;
+            $endDate = $request->end_date;
+            $parameterKey = $request->json('parameter_key');
+
+
+            $dateRange = $this->generateDateRange(Carbon::parse($startDate),Carbon::parse($endDate));
+
+            foreach($channels as $channel){
+                $eventInfo = new EventInfo($eventKey,$languageCode,$languageCodeDefault);
+                $event = $eventInfo->getEvent();
+                $negativeVote = $eventInfo->verifyNegativeVoteExists($event);
+               // $votesByParameter = ['negative_vote' => $negativeVote,'total' => [],'balance' => [], 'positive' => [], 'negative' => []];
+
+                $votesByParameter = [];
+
+                $data[$channel]['statistics_by_topic'] = [];
+                $data[$channel]['statistics_by_parameter'] = [];
+                $data[$channel]['count_by_parameter'] = [];
+                $data[$channel]['first_by_parameter'] = [];
+                $data[$channel]['second_by_parameter'] = [];
+                $data[$channel]['parameters_options'] = [];
+                $allEventVotes = $eventInfo->getEventVotes()->votes;
+
+                $allVotes = [];
+                foreach ($allEventVotes as $eventVote) {
+                    if($eventVote->source == $channel)
+                        $allVotes[] = $eventVote;
+                }
+
+                // Filter submitted votes if needed
+                if($viewSubmitted == 1){
+                    $arrayVotes = [];
+                    foreach ($allVotes as $vote){
+                        if($vote->submitted == 1){
+                            $arrayVotes[] = $vote;
+                        }
+                    }
+                    $allVotes = $arrayVotes;
+                }
+
+                /* ------- Get array with topics details and a collection of votes ------- */
+                $topicVotesVerification = $eventInfo->verifyValidTopicsAndVotes($allVotes);
+                $votes = $topicVotesVerification['votes_filtered'];
+                $topics = $topicVotesVerification['topic_details'];
+
+                /* ------ Data Headers to send in request's ------ */
+                $topicsKeys = $votes->keyBy('vote_key')->keys()->toArray();
+                $entityKey = $request->header('X-ENTITY-KEY');
+                $authToken = $request->header('X-AUTH-TOKEN');
+
+                /* ------ User Information with Parameters ------ */
+                // $usersInfo = new UsersInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);  /* Help --- this is to be removed*/
+                // $usersData = $usersInfo->getUsersParameters($usersKeys);                                /* Help --- this is to be removed*/
+
+                /* ------ Topics Information with Parameters ------ */
+                $topicsInfo = new TopicsInfo($authToken,$entityKey,$languageCode, $languageCodeDefault);
+                $topicsData = $topicsInfo->getTopicsParameters($cbKey, $topicsKeys);
+
+                /* ------- Get Parameter Options ------- */
+                $parameterAndOptions = $topicsInfo->getParameterAndOptions($parameterId);
+                $parameter = $parameterAndOptions['topic_parameter'];
+
+                $parameterOptions = $parameterAndOptions['topic_parameter_options'];
+                if( $parameterOptions->isEmpty()){
+                    //   return response()->json(["data" => $data], 200);
+                }
+
+                /* ------ Map the parameter options name with 0 count ------ */
+                $parameterOptionsValues = $parameterOptions->mapWithKeys(function ($parameter) {
+                    return [$parameter->label => 0];
+                })->toArray();
+
+                $topicsWithParameter = collect($topicsData)->filter(function($topic) use($parameterId,$parameterOptions){
+                    if(array_key_exists($parameterId,$topic) && $parameterOptions->has($topic[$parameterId])) {
+                        return true;
+                    }
+                    return false;
+                })->map(function($parameter) use ($parameterId){
+                    return $parameter[$parameterId];
+                });
+
+                if($topicsWithParameter->isEmpty()){
+                    //  return response()->json(["data" => $data], 200);
+                }
+
+                /* ------ Filter votes by user's with parameter ------ */
+                $votesFiltered = $votes->filter(function($vote) use($topicsWithParameter){
+                    return $topicsWithParameter->has($vote->vote_key);
+                })->toArray();
+
+                $parametersOptions = [];
+                /* ------ Count votes by user option and value ------ */
+                /*
+                $votesByParameter['positive']['no_value'] = 0;
+                $votesByParameter['negative']['no_value'] = 0;
+                $votesByParameter['balance']['no_value'] = 0;
+                $votesByParameter['total']['no_value'] = 0;
+                */
+                foreach ($allVotes as $vote){
+                    $date = Carbon::parse($vote->created_at);
+                    if (!array_key_exists($date->format('Y-m-d'), $dateRange)) {
+                        continue;
+                    }
+
+                    if(  $topicsWithParameter->has($vote->vote_key) && $parameterOptions->has($topicsWithParameter->get($vote->vote_key))   ){
+                        $optionName = $parameterOptions->get(  $topicsWithParameter->get($vote->vote_key)  )->label ?? null;
+                        if(empty($optionName)){
+                            continue;
+                        }
+                        if (!in_array($optionName, $parametersOptions)) {
+                            $parametersOptions[] = $optionName;
+                        }
+                        if($vote->value > 0){
+                            $votesByParameter[$date->format('Y-m-d')][$optionName]['positive'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['positive'] ?? 0) + $vote->value;
+                        }else{
+                            $votesByParameter[$date->format('Y-m-d')][$optionName]['negative']= ($votesByParameter[$date->format('Y-m-d')][$optionName]['negative']?? 0) + $vote->value;
+                        }
+                        $votesByParameter[$date->format('Y-m-d')][$optionName]['total'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['total'] ?? 0) + abs($vote->value);
+                        $votesByParameter[$date->format('Y-m-d')][$optionName]['balance'] = ($votesByParameter[$date->format('Y-m-d')][$optionName]['balance']?? 0) + $vote->value;
+
+                    } else {
+                        if($vote->value > 0){
+                            $votesByParameter[$date->format('Y-m-d')]['no_value']['positive'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['positive'] ??0) + $vote->value;
+
+                        }else{
+                            $votesByParameter[$date->format('Y-m-d')]['no_value']['negative'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['negative'] ?? 0) + $vote->value;
+                        }
+                        $votesByParameter[$date->format('Y-m-d')]['no_value']['total'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['total'] ?? 0) + abs($vote->value);
+                        $votesByParameter[$date->format('Y-m-d')]['no_value']['balance'] = ($votesByParameter[$date->format('Y-m-d')]['no_value']['balance'] ?? 0) + $vote->value;
+                    }
+                }
+                $data[$channel]['statistics_by_parameter'] = $votesByParameter;
+
+            }
+
+            return response()->json(["data" => $data], 200);
+
+        }catch (Exception $e){
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+
+    }
 
 
     public function voteStatisticsLastDay(Request $request, $eventKey)
@@ -2256,12 +3806,12 @@ class VotesStatisticsController extends Controller
                 $date = Carbon::parse($vote->created_at);
 
                 if($vote->value > 0){
-                    $hoursVote['positive'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] += $vote->value;
+                    $hoursVote['positive'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] = ($hoursVote['positive'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h']??0) + $vote->value;
                 }else{
-                    $hoursVote['negative'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] += abs($vote->value);
+                    $hoursVote['negative'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] = ($hoursVote['negative'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h']??0) + abs($vote->value);
                 }
-                $hoursVote['balance'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] += $vote->value;
-                $hoursVote['total'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] += abs($vote->value);
+                $hoursVote['balance'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] = ($hoursVote['balance'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h']??0) + $vote->value;
+                $hoursVote['total'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h'] = ($hoursVote['total'][str_pad($date->hour, 2, 0, STR_PAD_LEFT).'h']??0) + abs($vote->value);
             }
 
             return response()->json(["data" => $hoursVote ], 200);
@@ -2301,13 +3851,13 @@ class VotesStatisticsController extends Controller
                 if($vote->vote_key == $topic->topic_key){
 
                     if($vote->value > 0){
-                        $votesByCommuters['geo_area'][$geoArea]['positive'] += $vote->value;
+                        $votesByCommuters['geo_area'][$geoArea]['positive'] = ($votesByCommuters['geo_area'][$geoArea]['positive']??0) + $vote->value;
 
                     }else{
-                        $votesByCommuters['geo_area'][$geoArea]['negative'] += abs($vote->value);
+                        $votesByCommuters['geo_area'][$geoArea]['negative'] = ($votesByCommuters['geo_area'][$geoArea]['negative']??0) + abs($vote->value);
                     }
-                    $votesByCommuters['geo_area'][$geoArea]['total'] += abs($vote->value);
-                    $votesByCommuters['geo_area'][$geoArea]['balance'] += $vote->value;
+                    $votesByCommuters['geo_area'][$geoArea]['total'] = ($votesByCommuters['geo_area'][$geoArea]['total']??0) + abs($vote->value);
+                    $votesByCommuters['geo_area'][$geoArea]['balance'] = ($votesByCommuters['geo_area'][$geoArea]['balance']??0) + $vote->value;
                 }
             }
         }
@@ -2332,6 +3882,7 @@ class VotesStatisticsController extends Controller
         $votesByTopicAndParameter = [];
         foreach ($topics as $topic) {
             $dataTemp['title'] = $topic->title;
+            $dataTemp['topic_key'] = $topic->topic_key;
             $dataTemp['budget'] = 0;
             $dataTemp['category'] = "";
             $dataTemp['geo_area'] = "";
@@ -2355,13 +3906,22 @@ class VotesStatisticsController extends Controller
                     if ($value->code === 'image_map') {
                         $dataTemp['geo_area'] = ONE::verifyEmpavilleGeoArea($value->pivot->value);
                     }
+
+
+
+                    if(!empty($value->pivot->value) && $options->has($value->pivot->value)) {
+                        $dataTemp['typeList'] = $options->get($value->pivot->value)->label;
+                    }
+
+
+
                 }
             }
 
+            $userKeys = [];
             foreach ($votes as $vote) {
                 if($vote->vote_key == $topic->topic_key && $usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))){
-
-                        $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                    $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
                     if(empty($optionName)){
                         continue;
                     }
@@ -2373,19 +3933,44 @@ class VotesStatisticsController extends Controller
                     }
 
                     if($vote->value > 0){
-                        $dataTemp['parameter_options'][$optionName]['positive'] += $vote->value;
+                        $dataTemp['parameter_options'][$optionName]['positive'] = ($dataTemp['parameter_options'][$optionName]['positive']??0) + $vote->value;
 
                     }else{
-                        $dataTemp['parameter_options'][$optionName]['negative'] += abs($vote->value);
+                        $dataTemp['parameter_options'][$optionName]['negative'] = ($dataTemp['parameter_options'][$optionName]['negative']??0) + abs($vote->value);
                     }
 
-                    $dataTemp['parameter_options'][$optionName]['total']  += abs($vote->value);
-                    $dataTemp['parameter_options'][$optionName]['balance']  += $vote->value;
+                    $dataTemp['parameter_options'][$optionName]['total'] = ($dataTemp['parameter_options'][$optionName]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options'][$optionName]['balance'] = ($dataTemp['parameter_options'][$optionName]['balance']??0) + $vote->value;
 
-
+                    // Totals - voters and votes
+                    $userKeys[$vote->user_key] = 1;
                     $dataTemp['total'] += $vote->value;
+                } else if( $vote->vote_key == $topic->topic_key ){
+                    if (empty($dataTemp['parameter_options']["no_value"])) {
+                        $dataTemp['parameter_options']["no_value"]['positive'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['negative'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['balance'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['total'] = 0;
+                    }
+
+                    if($vote->value > 0){
+                        $dataTemp['parameter_options']["no_value"]['positive'] = ($dataTemp['parameter_options']["no_value"]['positive']??0) + $vote->value;
+
+                    }else{
+                        $dataTemp['parameter_options']["no_value"]['negative'] = ($dataTemp['parameter_options']["no_value"]['negative']??0) + abs($vote->value);
+                    }
+
+                    $dataTemp['parameter_options']["no_value"]['total'] = ($dataTemp['parameter_options']["no_value"]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options']["no_value"]['balance'] = ($dataTemp['parameter_options']["no_value"]['balance']??0) + $vote->value;
+
+                    // Totals - voters and votes
+                    $userKeys[$vote->user_key] = 1;
+                    $dataTemp['total'] = ($dataTemp['total']??0) + $vote->value;
                 }
             }
+
+            $dataTemp['votersCounter'] = count($userKeys);
+
             $votesByTopicAndParameter[] = $dataTemp;
         }
 
@@ -2395,6 +3980,116 @@ class VotesStatisticsController extends Controller
     }
 
 
+
+
+    /** Get votes by topic with parameters associated
+     * @param $topics
+     * @param $votes
+     * @param $usersWithParameter
+     * @param $parameterOptions
+     * @return array
+     */
+    private function getVotesByTopicAndTopicParameter($topics, $votes, $topicsWithParameter, $parameterOptions)
+    {
+        $votesByTopicAndParameter = [];
+        foreach ($topics as $topic) {
+            $dataTemp['title'] = $topic->title;
+            $dataTemp['topic_key'] = $topic->topic_key;
+            $dataTemp['budget'] = 0;
+            $dataTemp['category'] = "";
+            $dataTemp['geo_area'] = "";
+            $dataTemp['parameter_options'] = [];
+            $dataTemp['total'] = 0;
+
+
+            if (isset($topic->parameters)) {
+                foreach ($topic->parameters as $value) {
+                    $options = collect($value->options)->keyBy('id');
+                    if ($value->code === 'budget') {
+                        if ($options->has($value->pivot->value)) {
+                            $dataTemp['budget'] = (int)$options->get($value->pivot->value)->label;
+                        }
+                    }
+                    if ($value->code === 'category') {
+                        if ($options->has($value->pivot->value)) {
+                            $dataTemp['category'] = $options->get($value->pivot->value)->label;
+                        }
+                    }
+                    if ($value->code === 'image_map') {
+                        $dataTemp['geo_area'] = ONE::verifyEmpavilleGeoArea($value->pivot->value);
+                    }
+
+
+
+                    if(!empty($value->pivot->value) && $options->has($value->pivot->value)) {
+                        $dataTemp['typeList'] = $options->get($value->pivot->value)->label;
+                    }
+
+
+
+                }
+            }
+
+            $userKeys = [];
+            foreach ($votes as $vote) {
+                if($vote->vote_key == $topic->topic_key && $topicsWithParameter->has($vote->vote_key) && $parameterOptions->has($topicsWithParameter->get($vote->vote_key))){
+
+                    $optionName = $parameterOptions->get($topicsWithParameter->get($vote->vote_key))->label ?? null;
+                    if(empty($optionName)){
+                        continue;
+                    }
+
+                    if (empty($dataTemp['parameter_options'][$optionName])) {
+                        $dataTemp['parameter_options'][$optionName]['positive'] = 0;
+                        $dataTemp['parameter_options'][$optionName]['negative'] = 0;
+                        $dataTemp['parameter_options'][$optionName]['balance'] = 0;
+                        $dataTemp['parameter_options'][$optionName]['total'] = 0;
+                    }
+
+                    if($vote->value > 0){
+                        $dataTemp['parameter_options'][$optionName]['positive'] = ($dataTemp['parameter_options'][$optionName]['positive']??0) + $vote->value;
+
+                    }else{
+                        $dataTemp['parameter_options'][$optionName]['negative'] = ($dataTemp['parameter_options'][$optionName]['negative']??0) + abs($vote->value);
+                    }
+
+                    $dataTemp['parameter_options'][$optionName]['total'] = ($dataTemp['parameter_options'][$optionName]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options'][$optionName]['balance'] = ($dataTemp['parameter_options'][$optionName]['balance']??0) + $vote->value;
+
+                    // Totals - voters and votes
+                    $userKeys[$vote->user_key] = 1;
+                    $dataTemp['total'] += $vote->value;
+                } else if( $vote->vote_key == $topic->topic_key ){
+                    if (empty($dataTemp['parameter_options']["no_value"])) {
+                        $dataTemp['parameter_options']["no_value"]['positive'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['negative'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['balance'] = 0;
+                        $dataTemp['parameter_options']["no_value"]['total'] = 0;
+                    }
+
+                    if($vote->value > 0){
+                        $dataTemp['parameter_options']["no_value"]['positive'] = ($dataTemp['parameter_options']["no_value"]['positive']??0) + $vote->value;
+
+                    }else{
+                        $dataTemp['parameter_options']["no_value"]['negative'] = ($dataTemp['parameter_options']["no_value"]['negative']??0) + abs($vote->value);
+                    }
+
+                    $dataTemp['parameter_options']["no_value"]['total'] = ($dataTemp['parameter_options']["no_value"]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options']["no_value"]['balance'] = ($dataTemp['parameter_options']["no_value"]['balance']??0) + $vote->value;
+
+                    // Totals - voters and votes
+                    $userKeys[$vote->user_key] = 1;
+                    $dataTemp['total'] = ($dataTemp['total']??0) + $vote->value;
+                }
+            }
+            $dataTemp['votersCounter'] = count($userKeys);
+            $votesByTopicAndParameter[] = $dataTemp;
+        }
+
+        return $votesByTopicAndParameter;
+
+
+    }
 
 
     /** Get votes by topic with parameters associated
@@ -2460,17 +4155,17 @@ class VotesStatisticsController extends Controller
                     }
 
                     if($vote->value > 0){
-                        $dataTemp['parameter_options'][$ageInterval]['positive'] += $vote->value;
+                        $dataTemp['parameter_options'][$ageInterval]['positive'] = ($dataTemp['parameter_options'][$ageInterval]['positive']??0) + $vote->value;
 
                     }else{
-                        $dataTemp['parameter_options'][$ageInterval]['negative'] += abs($vote->value);
+                        $dataTemp['parameter_options'][$ageInterval]['negative'] = ($dataTemp['parameter_options'][$ageInterval]['negative']??0) + abs($vote->value);
                     }
 
-                    $dataTemp['parameter_options'][$ageInterval]['total']  += abs($vote->value);
-                    $dataTemp['parameter_options'][$ageInterval]['balance']  += $vote->value;
+                    $dataTemp['parameter_options'][$ageInterval]['total']  = ($dataTemp['parameter_options'][$ageInterval]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options'][$ageInterval]['balance'] = ($dataTemp['parameter_options'][$ageInterval]['balance']??0) + $vote->value;
 
 
-                    $dataTemp['total'] += $vote->value;
+                    $dataTemp['total'] = ($dataTemp['total']??0) + $vote->value;
                 }
             }
             $votesByTopicAndParameter[] = $dataTemp;
@@ -2524,9 +4219,9 @@ class VotesStatisticsController extends Controller
 
                     $age = $usersWithParameter->get($vote->user_key)['parameter_key'];
 
-                        $secondParam = $secondParameterOptions->get($usersWithParameter->get($vote->user_key)['second_parameter_key'])->name ?? '';
+                    $secondParam = $secondParameterOptions->get($usersWithParameter->get($vote->user_key)['second_parameter_key'])->name ?? '';
 
-                        $thirdParam = $thirdParameterOptions->get($usersWithParameter->get($vote->user_key)['third_parameter_key'])->name ?? '';
+                    $thirdParam = $thirdParameterOptions->get($usersWithParameter->get($vote->user_key)['third_parameter_key'])->name ?? '';
                     if (empty($dataTemp['parameter_options'][$secondParam][$thirdParam])) {
                         $dataTemp['parameter_options'][$secondParam][$thirdParam]['positive'] = 0;
                         $dataTemp['parameter_options'][$secondParam][$thirdParam]['negative'] = 0;
@@ -2535,17 +4230,17 @@ class VotesStatisticsController extends Controller
                     }
 
                     if($vote->value > 0){
-                        $dataTemp['parameter_options'][$secondParam][$thirdParam]['positive'] += $vote->value;
+                        $dataTemp['parameter_options'][$secondParam][$thirdParam]['positive'] = ($dataTemp['parameter_options'][$secondParam][$thirdParam]['positive']??0) + $vote->value;
 
                     }else{
-                        $dataTemp['parameter_options'][$secondParam][$thirdParam]['negative'] += abs($vote->value);
+                        $dataTemp['parameter_options'][$secondParam][$thirdParam]['negative'] = ($dataTemp['parameter_options'][$secondParam][$thirdParam]['negative']??0) + abs($vote->value);
                     }
 
-                    $dataTemp['parameter_options'][$secondParam][$thirdParam]['total']  += abs($vote->value);
-                    $dataTemp['parameter_options'][$secondParam][$thirdParam]['balance']  += $vote->value;
+                    $dataTemp['parameter_options'][$secondParam][$thirdParam]['total'] = ($dataTemp['parameter_options'][$secondParam][$thirdParam]['total']??0) + abs($vote->value);
+                    $dataTemp['parameter_options'][$secondParam][$thirdParam]['balance'] = ($dataTemp['parameter_options'][$secondParam][$thirdParam]['balance']??0) + $vote->value;
 
 
-                    $dataTemp['total'] += $vote->value;
+                    $dataTemp['total'] = ($dataTemp['total']??0) + $vote->value;
                 }
             }
             $votesByTopicAndParameter[] = $dataTemp;
@@ -2575,7 +4270,7 @@ class VotesStatisticsController extends Controller
         foreach ($votes as $vote) {
             if($usersWithParameter->has($vote->user_key) && $parameterOptions->has($usersWithParameter->get($vote->user_key))){
 
-                    $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
+                $optionName = $parameterOptions->get($usersWithParameter->get($vote->user_key))->name ?? null;
                 if(empty($optionName)){
                     continue;
                 }
@@ -2583,13 +4278,13 @@ class VotesStatisticsController extends Controller
                     if(empty($data['count_by_parameter'][$optionName]['positive'])){
                         $data['count_by_parameter'][$optionName]['positive'] = 0;
                     }
-                    $data['count_by_parameter'][$optionName]['positive'] += 1;
+                    $data['count_by_parameter'][$optionName]['positive'] = ($data['count_by_parameter'][$optionName]['positive']??0) + 1;
 
                 }else{
                     if(empty($data['count_by_parameter'][$optionName]['negative'])){
                         $data['count_by_parameter'][$optionName]['negative'] = 0;
                     }
-                    $data['count_by_parameter'][$optionName]['negative'] += 1;
+                    $data['count_by_parameter'][$optionName]['negative'] = ($data['count_by_parameter'][$optionName]['negative']??0) + 1;
                 }
 
 
@@ -2601,13 +4296,13 @@ class VotesStatisticsController extends Controller
                         if(empty($data['first_by_parameter'][$optionName]['positive'])){
                             $data['first_by_parameter'][$optionName]['positive'] = 0;
                         }
-                        $data['first_by_parameter'][$optionName]['positive'] += 1;
+                        $data['first_by_parameter'][$optionName]['positive'] = ($data['first_by_parameter'][$optionName]['positive']??0) + 1;
 
                     }else{
                         if(empty($data['first_by_parameter'][$optionName]['negative'])){
                             $data['first_by_parameter'][$optionName]['negative'] = 0;
                         }
-                        $data['first_by_parameter'][$optionName]['negative'] += 1;
+                        $data['first_by_parameter'][$optionName]['negative'] = ($data['first_by_parameter'][$optionName]['negative']??0) + 1;
                     }
                 }
 
@@ -2617,16 +4312,16 @@ class VotesStatisticsController extends Controller
                         if(empty($data['second_by_parameter'][$optionName]['positive'])){
                             $data['second_by_parameter'][$optionName]['positive'] = 0;
                         }
-                        $data['second_by_parameter'][$optionName]['positive'] += 1;
+                        $data['second_by_parameter'][$optionName]['positive'] = ($data['second_by_parameter'][$optionName]['positive']??0) + 1;
 
                     }else{
                         if(empty($data['second_by_parameter'][$optionName]['negative'])){
                             $data['second_by_parameter'][$optionName]['negative'] = 0;
                         }
-                        $data['second_by_parameter'][$optionName]['negative'] += 1;
+                        $data['second_by_parameter'][$optionName]['negative'] = ($data['second_by_parameter'][$optionName]['negative']??0) + 1;
                     }
                 }
-                $usersVoted[$vote->user_key] = $usersVoted[$vote->user_key] + 1;
+                $usersVoted[$vote->user_key] = ($usersVoted[$vote->user_key]??0) + 1;
             }
         }
         return $data;
@@ -2668,7 +4363,7 @@ class VotesStatisticsController extends Controller
         });
 
         if($usersWithParameter->isEmpty()){
-            return response()->json(["data" => $votesByParameter], 200);
+            // return response()->json(["data" => $votesByParameter], 200);
         }
 
 
@@ -2757,7 +4452,7 @@ class VotesStatisticsController extends Controller
                 } else {
                     $ageInterval = '70+';
                 }
-                $votePopulation[$ageInterval] += 1;
+                $votePopulation[$ageInterval] = ($votePopulation[$ageInterval]??0) + 1;
             }
         }
 
@@ -2784,13 +4479,13 @@ class VotesStatisticsController extends Controller
                 }
 
                 if($vote->value > 0){
-                    $votesByParameter['positive'][$ageInterval] += $vote->value;
+                    $votesByParameter['positive'][$ageInterval] = ($votesByParameter['positive'][$ageInterval]??0) + $vote->value;
 
                 }else{
-                    $votesByParameter['negative'][$ageInterval] += $vote->value;
+                    $votesByParameter['negative'][$ageInterval] = ($votesByParameter['negative'][$ageInterval]??0) + $vote->value;
                 }
-                $votesByParameter['total'][$ageInterval] += abs($vote->value);
-                $votesByParameter['balance'][$ageInterval] += $vote->value;
+                $votesByParameter['total'][$ageInterval] = ($votesByParameter['total'][$ageInterval]??0) + abs($vote->value);
+                $votesByParameter['balance'][$ageInterval] = ($votesByParameter['balancetotal'][$ageInterval]??0) + $vote->value;
             }
         }
 
@@ -2849,13 +4544,13 @@ class VotesStatisticsController extends Controller
                     if(empty($data['count_by_parameter'][$ageInterval]['positive'])){
                         $data['count_by_parameter'][$ageInterval]['positive'] = 0;
                     }
-                    $data['count_by_parameter'][$ageInterval]['positive'] += 1;
+                    $data['count_by_parameter'][$ageInterval]['positive'] = ($data['count_by_parameter'][$ageInterval]['positive']??0) + 1;
 
                 }else{
                     if(empty($data['count_by_parameter'][$ageInterval]['negative'])){
                         $data['count_by_parameter'][$ageInterval]['negative'] = 0;
                     }
-                    $data['count_by_parameter'][$ageInterval]['negative'] += 1;
+                    $data['count_by_parameter'][$ageInterval]['negative'] = ($data['count_by_parameter'][$ageInterval]['negative']??0) + 1;
                 }
 
                 /** First Vote by Parameter*/
@@ -2866,13 +4561,13 @@ class VotesStatisticsController extends Controller
                         if(empty($data['first_by_parameter'][$ageInterval]['positive'])){
                             $data['first_by_parameter'][$ageInterval]['positive'] = 0;
                         }
-                        $data['first_by_parameter'][$ageInterval]['positive'] += 1;
+                        $data['first_by_parameter'][$ageInterval]['positive'] = ($data['first_by_parameter'][$ageInterval]['positive']??0) + 1;
 
                     }else{
                         if(empty($data['first_by_parameter'][$ageInterval]['negative'])){
                             $data['first_by_parameter'][$ageInterval]['negative'] = 0;
                         }
-                        $data['first_by_parameter'][$ageInterval]['negative'] += 1;
+                        $data['first_by_parameter'][$ageInterval]['negative'] = ($data['first_by_parameter'][$ageInterval]['negative']??0) + 1;
                     }
                 }
 
@@ -2883,16 +4578,16 @@ class VotesStatisticsController extends Controller
                         if(empty($data['second_by_parameter'][$ageInterval]['positive'])){
                             $data['second_by_parameter'][$ageInterval]['positive'] = 0;
                         }
-                        $data['second_by_parameter'][$ageInterval]['positive'] += 1;
+                        $data['second_by_parameter'][$ageInterval]['positive'] = ($data['second_by_parameter'][$ageInterval]['positive']??0) + 1;
 
                     }else{
                         if(empty($data['second_by_parameter'][$ageInterval]['negative'])){
                             $data['second_by_parameter'][$ageInterval]['negative'] = 0;
                         }
-                        $data['second_by_parameter'][$ageInterval]['negative'] += 1;
+                        $data['second_by_parameter'][$ageInterval]['negative'] = ($data['second_by_parameter'][$ageInterval]['negative']??0) + 1;
                     }
                 }
-                $usersVoted[$vote->user_key] = $usersVoted[$vote->user_key] + 1;
+                $usersVoted[$vote->user_key] = ($usersVoted[$vote->user_key]??0) + 1;
             }
         }
         return $data;
@@ -2955,7 +4650,7 @@ class VotesStatisticsController extends Controller
                     $allTopicsData = $response->json()->data;
                     $topTopics = collect($topTopics);
                     $lastPositionIndex = $topTopics->max("position") ?? 0;
-                    
+
                     foreach ($allTopicsData as $topicData) {
                         if (!$topTopics->contains("topic_key",$topicData->topic_key)) {
                             $lastPositionIndex++;
@@ -2964,7 +4659,8 @@ class VotesStatisticsController extends Controller
                                 "topic_key"     => $topicData->topic_key,
                                 "topic_name"    => $topicData->title,
                                 "created_by"    => $topicData->created_by,
-                                "total_votes"   => 0
+                                "total_votes"   => 0,
+                                "active_status" => $topicData->active_status??[]
                             );
                             $topTopics->push($temp);
 

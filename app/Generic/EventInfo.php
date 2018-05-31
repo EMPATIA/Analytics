@@ -54,18 +54,18 @@ class EventInfo
      * @return mixed
      * @throws Exception
      */
-    public function getEventVotes()
+    public function getEventVotes($viewSubmitted = null)
     {
 
-        //Get all votes
         $response = ONE::get([
                 'component' => 'vote',
                 'api' => 'event',
                 'api_attribute' => $this->eventKey,
-                'method' => 'votes'
+                'method' => 'votes',
+                'params' => ['submitted' => $viewSubmitted]
             ]
         );
-
+//        !is_null($response->json()) ? dd("remote/DD",$response->json()) : die("remote/ECHO" .$response->content());
         if ($response->statusCode() != 200) {
             throw new Exception('error_getting_votes');
         }
